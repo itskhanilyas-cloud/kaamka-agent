@@ -112,3 +112,9 @@ code { font-size: .85em; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } #toast { transition: none; } }
+
+.shot { flex: 0 0 78%; max-width: 320px; width: 78%; height: auto; border-radius: 12px; scroll-snap-align: start; border: 1px solid var(--line); background: var(--line); }
+.shot.tall { max-width: 220px; }
+details summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.slide-edit { border-left: 3px solid var(--indigo); padding-left: 12px; margin: 12px 0; }
+.badge[hidden] { display: none; }

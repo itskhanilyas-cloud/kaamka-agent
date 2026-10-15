@@ -5,10 +5,13 @@ An approval-first agent that plans, creates and publishes Instagram content for 
 
 **Status: Phase 5 (dashboard).** Mobile-first web dashboard at `/`: Overview, Content Studio, Approval Center, Posts, Money, Settings, Audit log (Trend Lab and Analytics show what is coming; no fake numbers). Built on Phase 4 (text generation): Phase 3 foundation plus the Content Studio: AI-written
 captions, hooks, carousel slides and Reel scripts in the brand voice, 1-4 variants per idea,
-each scored by a quality checklist and saved as a draft. 59 automated tests pass.
+each scored by a quality checklist and saved as a draft. 72 automated tests pass.
 **Live on Azure** (Container Apps, Central India) behind Microsoft sign-in, deployed by GitHub Actions on every green
 CI run. Live AI generation via Azure OpenAI (`text-main` = gpt-5.4-mini, managed identity) verified 2026-10-15.
-Not yet built: images and video (Phase 4b), Instagram (Phase 6), scheduled jobs in Azure (Phase 7).
+**Phase 4b:** every draft gets branded 1080×1350 JPEG slides (Instagram's API accepts JPEG only), drawn from
+brand templates with Pillow and the bundled Inter font (SIL OFL): no AI imagery, no per-image cost. Slide text is
+editable in the dashboard and re-renders the images. Reels get a cover; Reel video is a later phase.
+Not yet built: Reel video, Instagram (Phase 6), scheduled jobs in Azure (Phase 7).
 
 ## Safety rules enforced in code
 

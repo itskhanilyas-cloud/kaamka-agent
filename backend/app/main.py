@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
         for k, v in SECURITY_HEADERS.items():
             response.headers.setdefault(k, v)
         if request.url.path.startswith("/api"):
-            response.headers["Cache-Control"] = "no-store"
+            response.headers.setdefault("Cache-Control", "no-store")  # media sets its own
         if settings.app_env == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response

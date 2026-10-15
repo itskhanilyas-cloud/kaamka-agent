@@ -67,11 +67,17 @@ function segmented(options, value, onChange) {
 }
 
 // ---------- content preview (used by Studio, Approvals, Post detail) ----------
-function contentPreview(content, mediaType, caption) {
+function contentPreview(content, mediaType, caption, media) {
   const c = content || {};
   const parts = [];
-  if (c.hook) parts.push(h("p", { class: "hook" }, c.hook));
-  if (mediaType === "CAROUSEL" && Array.isArray(c.slides)) {
+  const shots = (media || []).filter((m) => m.kind === "slide" || mediaType === "REELS");
+  if (c.hook && !shots.length) parts.push(h("p", { class: "hook" }, c.hook));
+  if (shots.length) {
+    parts.push(h("div", { class: "slides", "aria-label": "Post images" },
+      shots.map((m, i) => h("img", { class: mediaType === "REELS" ? "shot tall" : "shot", src: m.url, loading: "lazy",
+        alt: `${mediaType === "REELS" ? "Reel cover" : "Slide " + (i + 1)}${c.slides?.[i]?.title ? ": " + c.slides[i].title : c.hook ? ": " + c.hook : ""}` }))));
+    if (mediaType === "REELS") parts.push(h("p", { class: "meta" }, "Reel cover only. The video itself arrives in a later phase."));
+  } else if (mediaType === "CAROUSEL" && Array.isArray(c.slides)) {
     parts.push(h("div", { class: "slides", "aria-label": "Carousel slides" },
       c.slides.map((s, i) => h("div", { class: "slide" }, h("b", {}, s.title || ""), h("span", {}, s.body || ""), h("small", {}, `${i + 1} / ${c.slides.length}`)))));
   }
@@ -136,7 +142,8 @@ async function viewStudio() {
         r.provider === "mock" ? h("div", { class: "note" }, "Practice mode: these are placeholders, not real AI writing. Real drafts start once the app runs in Azure.") : null,
         ...r.drafts.map((d, i) => h("article", { class: "card" },
           h("div", { class: "row" }, h("span", { class: "tag" }, `Option ${i + 1}`), mockTag(d.is_mock)),
-          contentPreview(d.variant, form.media_type, null),
+          contentPreview(d.variant, form.media_type, null, d.media),
+          d.render_error ? errorBox(new Error("Images: " + d.render_error)) : null,
           qualityBlock(d.quality),
           h("a", { href: `#/post/${d.post_id}` }, h("button", { class: "secondary full", style: "margin-top:8px" }, "Open draft to edit & submit"))))].filter(Boolean));
       results.querySelector("h2")?.scrollIntoView({ behavior: "smooth" });
@@ -176,7 +183,7 @@ async function viewApprovals() {
         p ? h("a", { href: `#/post/${p.id}` }, h("button", { class: "secondary" }, "Edit")) : null);
       return h("article", { class: "card" },
         h("div", { class: "row" }, h("span", { class: "tag" }, r.kind.replace("_", " ")), p ? h("span", { class: "tag" }, FORMAT_LABEL[p.media_type]) : null, p ? mockTag(p.is_mock) : null),
-        p ? contentPreview(p.content, p.media_type, p.caption) : h("pre", { class: "preview" }, JSON.stringify(r.payload, null, 2)),
+        p ? contentPreview(p.content, p.media_type, p.caption, p.media) : h("pre", { class: "preview" }, JSON.stringify(r.payload, null, 2)),
         p?.scheduled_at ? h("p", { class: "meta" }, "Goes out: ", when(p.scheduled_at)) : p ? h("p", { class: "meta" }, "Goes out as soon as approved (publishing is a dry run until Instagram is connected).") : null,
         h("p", { class: "meta" }, `Requested by ${r.requested_by} · ${when(r.created_at)}`),
         actions);
@@ -216,24 +223,43 @@ async function viewPost(id) {
   const all = await api("/posts");
   const p = all.find((x) => x.id === id);
   if (!p) return page("Post not found", null);
-  const editable = !["published", "pending_approval"].includes(p.status);
+  const editable = ["draft", "rejected", "failed", "approved"].includes(p.status);
   const edits = { caption: p.caption, scheduled_at: p.scheduled_at, has_affiliate_link: p.has_affiliate_link };
+  const c = p.content || {};
+  const draft = { hook: c.hook || "", slides: (c.slides || []).map((s) => ({ title: s.title || "", body: s.body || "" })) };
+  let contentDirty = false;
+  const body = () => (contentDirty ? { ...edits, ...(p.media_type === "CAROUSEL" ? { slides: draft.slides } : { hook: draft.hook }) } : edits);
+  const rerender = async () => {
+    try { await api(`/posts/${id}/render`, { method: "POST" }); toast("Images updated"); route(); } catch (e) { toast(e.message); }
+  };
+  const slideEditor = p.media_type === "CAROUSEL"
+    ? draft.slides.map((s, i) => h("div", { class: "slide-edit" },
+        h("label", { for: `st${i}` }, `Slide ${i + 1} title`),
+        h("input", { id: `st${i}`, type: "text", maxlength: 200, value: s.title, oninput: (e) => { s.title = e.target.value; contentDirty = true; } }),
+        h("label", { for: `sb${i}` }, `Slide ${i + 1} text`),
+        h("textarea", { id: `sb${i}`, style: "min-height:80px", maxlength: 600, oninput: (e) => { s.body = e.target.value; contentDirty = true; } }, s.body)))
+    : [h("label", { for: "hook" }, p.media_type === "REELS" ? "Cover headline" : "Image headline"),
+       h("input", { id: "hook", type: "text", maxlength: 200, value: draft.hook, oninput: (e) => { draft.hook = e.target.value; contentDirty = true; } })];
   const toLocal = (s) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
 
   const save = async () => {
-    try { await api(`/posts/${id}`, { method: "PATCH", body: edits }); toast("Saved"); route(); } catch (e) { toast(e.message); }
+    try { await api(`/posts/${id}`, { method: "PATCH", body: body() }); toast(contentDirty ? "Saved and images updated" : "Saved"); route(); } catch (e) { toast(e.message); }
   };
   const submit = async () => {
-    try { await api(`/posts/${id}`, { method: "PATCH", body: edits }); await api(`/posts/${id}/submit`, { method: "POST" });
+    try { await api(`/posts/${id}`, { method: "PATCH", body: body() }); await api(`/posts/${id}/submit`, { method: "POST" });
       toast("Sent to Approval Center"); refreshBadge(); location.hash = "#/approvals"; }
     catch (e) { toast(e.message); }
   };
 
   return page(FORMAT_LABEL[p.media_type] + " post", null,
     h("div", { class: "row", style: "margin-bottom:10px" }, statusTag(p), mockTag(p.is_mock), p.generated_by && !p.is_mock ? h("span", { class: "meta" }, `Written by ${p.generated_by}`) : null),
-    h("div", { class: "card" }, contentPreview(p.content, p.media_type, p.caption), qualityBlock(p.quality)),
+    h("div", { class: "card" }, contentPreview(p.content, p.media_type, p.caption, p.media), qualityBlock(p.quality),
+      editable && !p.media.length ? h("button", { class: "secondary", style: "margin-top:8px", onclick: rerender }, "Make images") : null),
     editable ? h("div", { class: "card" },
       h("h2", {}, "Edit"),
+      h("details", { open: !p.media.length },
+        h("summary", {}, p.media_type === "CAROUSEL" ? "Slide text (updates the images)" : "Headline (updates the image)"),
+        slideEditor),
       h("label", { for: "cap" }, "Caption (with hashtags)"),
       h("textarea", { id: "cap", style: "min-height:200px", oninput: (e) => (edits.caption = e.target.value) }, p.caption),
       h("label", { for: "when" }, "Publish time (optional)"),

@@ -4,13 +4,16 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from fastapi.responses import Response
+from sqlalchemy.orm import Session, object_session
 
 from .config import Settings, get_settings
 from .db import get_db
 from .models import ActionKind, ActionRequest, ActionStatus, AuditLog, MediaType, Post, PostStatus
 from .security import require_owner
-from .services import approvals, budget, policy, revenue
+from .models import Media
+from .render import service as render_service
+from .services import approvals, audit, budget, policy, revenue
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_owner)])
 
@@ -24,11 +27,17 @@ class PostIn(BaseModel):
     scheduled_at: datetime | None = None
 
 
+class SlideIn(BaseModel):
+    title: str = Field(default="", max_length=200)
+    body: str = Field(default="", max_length=600)
+
+
 class PostEdit(BaseModel):
     caption: str | None = None
-    media_urls: list[str] | None = None
     scheduled_at: datetime | None = None
     has_affiliate_link: bool | None = None
+    hook: str | None = Field(default=None, max_length=200)
+    slides: list[SlideIn] | None = Field(default=None, max_length=10)
 
 
 class Decision(BaseModel):
@@ -63,6 +72,8 @@ def _post_out(p: Post) -> dict:
             "scheduled_at": p.scheduled_at, "published_at": p.published_at, "ig_media_id": p.ig_media_id,
             "last_error": p.last_error, "content": p.content, "quality": p.quality,
             "generated_by": p.generated_by, "is_mock": p.generated_by == "MOCK",
+            "media": [{"id": m.id, "url": f"/api/media/{m.id}", "kind": m.kind, "width": m.width, "height": m.height}
+                      for m in render_service.media_for(object_session(p), p.id)] if object_session(p) else [],
             "checks": approvals.check_post_ready(p)}
 
 
@@ -88,6 +99,15 @@ def studio_generate(body: GenerateIn, db: Session = Depends(get_db), user: str =
     except providers.ProviderError as e:
         db.commit()
         raise HTTPException(502, str(e))
+    for d in drafts:  # brand images are free to make, so every draft gets them straight away
+        post = db.get(Post, d["post_id"])
+        try:
+            render_service.render_post(db, post, user)
+        except render_service.RenderError as e:
+            d["render_error"] = str(e)
+        d["media"] = [{"id": m.id, "url": f"/api/media/{m.id}", "kind": m.kind}
+                      for m in render_service.media_for(db, post.id)]
+        d["checks"] = approvals.check_post_ready(post)
     db.commit()
     return {"provider": provider.name, "drafts": drafts}
 
@@ -115,7 +135,6 @@ def create_post(body: PostIn, db: Session = Depends(get_db), user: str = Depends
     p = Post(**body.model_dump(), status=PostStatus.draft)
     db.add(p)
     db.flush()
-    from .services import audit
     audit.record(db, user, "post_created", p.id)
     db.commit()
     return _post_out(p)
@@ -132,15 +151,50 @@ def list_posts(status: PostStatus | None = None, db: Session = Depends(get_db)):
 @router.patch("/posts/{post_id}")
 def edit_post(post_id: str, body: PostEdit, db: Session = Depends(get_db), user: str = Depends(require_owner)):
     p = db.get(Post, post_id) or _404()
-    if p.status in (PostStatus.published,):
-        raise HTTPException(409, "published posts cannot be edited here")
+    if p.status not in render_service.EDITABLE and p.status != PostStatus.approved:
+        raise HTTPException(409, f"a post that is {p.status.value} cannot be edited")
     changes = body.model_dump(exclude_unset=True)
+    content_changed = False
+    if "hook" in changes or "slides" in changes:
+        content = dict(p.content or {})
+        if "hook" in changes:
+            content["hook"] = changes.pop("hook") or ""
+        if "slides" in changes:
+            content["slides"] = changes.pop("slides") or []
+        p.content, content_changed = content, True
     for k, v in changes.items():
         setattr(p, k, v)
-    from .services import audit
-    audit.record(db, user, "post_edited", p.id, fields=sorted(changes))
+    if p.status == PostStatus.approved:  # any edit to an approved post sends it back for approval
+        p.status = PostStatus.draft
+        for r in db.query(ActionRequest).filter(ActionRequest.post_id == p.id, ActionRequest.status == ActionStatus.approved):
+            r.status = ActionStatus.rejected
+            r.decision_note = "edited after approval; needs a fresh approval"
+    if content_changed:
+        try:
+            render_service.render_post(db, p, user)
+        except render_service.RenderError as e:
+            raise HTTPException(422, str(e))
+    audit.record(db, user, "post_edited", p.id, fields=sorted(body.model_dump(exclude_unset=True)))
     db.commit()
     return _post_out(p)
+
+
+@router.post("/posts/{post_id}/render")
+def render_post(post_id: str, db: Session = Depends(get_db), user: str = Depends(require_owner)):
+    p = db.get(Post, post_id) or _404()
+    try:
+        render_service.render_post(db, p, user)
+    except render_service.RenderError as e:
+        raise HTTPException(422, str(e))
+    db.commit()
+    return _post_out(p)
+
+
+@router.get("/media/{media_id}")
+def get_media(media_id: str, db: Session = Depends(get_db)):
+    m = db.get(Media, media_id) or _404()
+    return Response(m.data, media_type=m.mime,
+                    headers={"Cache-Control": "private, max-age=86400, immutable", "ETag": f'"{m.sha256}"'})
 
 
 @router.post("/posts/{post_id}/submit", status_code=201)
@@ -204,7 +258,6 @@ def add_revenue(body: RevenueIn, db: Session = Depends(get_db), user: str = Depe
         e = revenue.add_revenue(db, body.source, body.amount_inr, body.confirmed, body.evidence, body.post_id)
     except ValueError as err:
         raise HTTPException(422, str(err))
-    from .services import audit
     audit.record(db, user, "revenue_recorded", str(e.id), source=e.source, confirmed=e.confirmed)
     db.commit()
     return {"id": e.id}

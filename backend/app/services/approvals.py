@@ -34,8 +34,10 @@ def check_post_ready(post: Post) -> list[str]:
         head = caption[:150].lower()
         if not any(tag in head for tag in AFFILIATE_DISCLOSURES):
             problems.append("affiliate post must start with a clear disclosure (#Ad or #Affiliate) in the first 150 characters")
-    if not post.media_urls:
-        problems.append("no media attached")
+    if post.media_type == "REELS" and not post.media_urls:
+        problems.append("Reel video production arrives in a later phase; Reels can't be submitted yet")
+    elif not post.media_urls:
+        problems.append("no images yet: render the slides first")
     if post.media_type == "CAROUSEL" and not (2 <= len(post.media_urls) <= 10):
         problems.append("carousel needs 2-10 items")
     return problems
