@@ -53,7 +53,11 @@ jobs:
 
       - name: Roll out new revision
         run: |
-          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none
+          # Azure occasionally rejects an update while a previous operation settles; retry a few times.
+          for i in 1 2 3; do
+            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none && break
+            [ "$i" = 3 ] && exit 1; echo "retrying in 30s"; sleep 30
+          done
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           echo "FQDN=$FQDN" >> "$GITHUB_ENV"
 
