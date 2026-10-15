@@ -164,3 +164,9 @@ def test_azure_provider_requires_config(settings_env, monkeypatch):
     monkeypatch.setattr(settings_env, "text_provider", "azure_openai")
     with pytest.raises(providers.ProviderError):
         providers.get_text_provider(settings_env)
+
+
+def test_quality_flags_devanagari():
+    v = dict(GOOD_VARIANT, caption=GOOD_VARIANT["caption"] + " अलग-अलग")
+    r = quality.evaluate(v, "CAROUSEL", False)
+    assert any(c.name == "roman_script_only" and not c.passed for c in r.checks)

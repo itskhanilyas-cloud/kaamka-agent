@@ -5,10 +5,10 @@ An approval-first agent that plans, creates and publishes Instagram content for 
 
 **Status: Phase 5 (dashboard).** Mobile-first web dashboard at `/`: Overview, Content Studio, Approval Center, Posts, Money, Settings, Audit log (Trend Lab and Analytics show what is coming; no fake numbers). Built on Phase 4 (text generation): Phase 3 foundation plus the Content Studio: AI-written
 captions, hooks, carousel slides and Reel scripts in the brand voice, 1-4 variants per idea,
-each scored by a quality checklist and saved as a draft. 55 automated tests pass.
-Azure OpenAI (`kaamka-ai-4856`, deployment `text-main` = gpt-5.4-mini) is created; the live call is
-verified after the first Azure deployment, because Claude's build workspace cannot reach Azure.
-Not yet built: images and video (Phase 4b), Instagram (Phase 6), Azure deployment (Phase 10).
+each scored by a quality checklist and saved as a draft. 59 automated tests pass.
+**Live on Azure** (Container Apps, Central India) behind Microsoft sign-in, deployed by GitHub Actions on every green
+CI run. Live AI generation via Azure OpenAI (`text-main` = gpt-5.4-mini, managed identity) verified 2026-10-15.
+Not yet built: images and video (Phase 4b), Instagram (Phase 6), scheduled jobs in Azure (Phase 7).
 
 ## Safety rules enforced in code
 

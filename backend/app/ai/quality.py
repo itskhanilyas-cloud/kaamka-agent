@@ -47,6 +47,8 @@ def evaluate(variant: dict, media_type: str, has_affiliate_link: bool) -> Qualit
     r.checks.append(Check("hashtag_count", 3 <= len(tags) <= 8, f"{len(tags)} hashtags; use 3-8"))
     r.checks.append(Check("hashtags_wellformed", all(isinstance(t, str) and t.startswith("#") and " " not in t for t in tags),
                           "every hashtag must start with # and have no spaces"))
+    non_latin = any("\u0900" <= ch <= "\u097F" for ch in text_all)  # Devanagari
+    r.checks.append(Check("roman_script_only", not non_latin, "write Hinglish in Roman letters (found Devanagari)"))
     banned = [p for p in BANNED_PHRASES if p in text_all]
     r.checks.append(Check("no_overclaiming", not banned, f"remove: {', '.join(banned)}", blocking=True))
     if has_affiliate_link:

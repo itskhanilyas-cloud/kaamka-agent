@@ -131,14 +131,14 @@ async function viewStudio() {
     results.replaceChildren();
     try {
       const r = await api("/studio/generate", { method: "POST", body: form });
-      results.replaceChildren(
-        h("h2", { style: "margin-top:20px" }, `${r.drafts.length} drafts, best first`),
+      results.replaceChildren(...[
+        h("h2", { style: "margin-top:20px" }, `${r.drafts.length} draft${r.drafts.length > 1 ? "s" : ""}, best first`),
         r.provider === "mock" ? h("div", { class: "note" }, "Practice mode: these are placeholders, not real AI writing. Real drafts start once the app runs in Azure.") : null,
         ...r.drafts.map((d, i) => h("article", { class: "card" },
           h("div", { class: "row" }, h("span", { class: "tag" }, `Option ${i + 1}`), mockTag(d.is_mock)),
           contentPreview(d.variant, form.media_type, null),
           qualityBlock(d.quality),
-          h("a", { href: `#/post/${d.post_id}` }, h("button", { class: "secondary full", style: "margin-top:8px" }, "Open draft to edit & submit")))));
+          h("a", { href: `#/post/${d.post_id}` }, h("button", { class: "secondary full", style: "margin-top:8px" }, "Open draft to edit & submit"))))].filter(Boolean));
       results.querySelector("h2")?.scrollIntoView({ behavior: "smooth" });
     } catch (e) { results.replaceChildren(errorBox(e)); }
     btn.disabled = false; btn.replaceChildren("Generate drafts");
