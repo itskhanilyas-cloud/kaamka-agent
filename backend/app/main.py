@@ -1,7 +1,8 @@
+import hashlib
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
@@ -36,6 +37,8 @@ def create_app() -> FastAPI:
             response.headers.setdefault(k, v)
         if request.url.path.startswith("/api"):
             response.headers.setdefault("Cache-Control", "no-store")  # media sets its own
+        elif request.url.path.startswith("/static"):
+            response.headers.setdefault("Cache-Control", "no-cache")  # always revalidate (cheap: ETag)
         if settings.app_env == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -54,8 +57,16 @@ def create_app() -> FastAPI:
     # The dashboard shell holds no data; every number comes from /api, which requires the owner.
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+    # Asset URLs carry a content hash, so a new deploy is picked up immediately, even from phone caches.
+    def _ver(name: str) -> str:
+        return hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:12]
+
+    index_html = ((STATIC / "index.html").read_text()
+                  .replace("/static/app.js", f"/static/app.js?v={_ver('app.js')}")
+                  .replace("/static/app.css", f"/static/app.css?v={_ver('app.css')}"))
+
     @app.get("/", include_in_schema=False)
     def dashboard():
-        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(index_html, headers={"Cache-Control": "no-cache"})
 
     return app
