@@ -34,6 +34,25 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// In-page confirmation sheet. Native confirm()/prompt() are blocked or hidden in some
+// embedded browsers and app webviews, which made buttons look dead.
+function ask(message, { ok = "Yes", danger = false, input = null } = {}) {
+  return new Promise((resolve) => {
+    const prev = document.activeElement;
+    const field = input ? h("textarea", { rows: 3, placeholder: input, "aria-label": input }) : null;
+    const close = (val) => { overlay.remove(); document.removeEventListener("keydown", onKey); prev?.focus?.(); resolve(val); };
+    const onKey = (e) => { if (e.key === "Escape") close(input ? null : false); };
+    const okBtn = h("button", { class: danger ? "bad" : "good", onclick: () => close(input ? field.value.trim() : true) }, ok);
+    const overlay = h("div", { class: "sheet-backdrop", onclick: (e) => { if (e.target === overlay) close(input ? null : false); } },
+      h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": message },
+        h("p", {}, message), field,
+        h("div", { class: "row" }, okBtn, h("button", { class: "secondary", onclick: () => close(input ? null : false) }, "Cancel"))));
+    document.body.append(overlay);
+    document.addEventListener("keydown", onKey);
+    (field || okBtn).focus();
+  });
+}
+
 function toast(msg) {
   const t = document.getElementById("toast");
   t.textContent = msg; t.classList.add("show");
@@ -184,25 +203,25 @@ async function viewApprovals() {
       return h("article", { class: "card" },
         h("div", { class: "row" }, h("span", { class: "tag" }, r.kind.replace("_", " ")), p ? h("span", { class: "tag" }, FORMAT_LABEL[p.media_type]) : null, p ? mockTag(p.is_mock) : null),
         p ? contentPreview(p.content, p.media_type, p.caption, p.media) : h("pre", { class: "preview" }, JSON.stringify(r.payload, null, 2)),
-        p?.scheduled_at ? h("p", { class: "meta" }, "Goes out: ", when(p.scheduled_at)) : p ? h("p", { class: "meta" }, "Goes out as soon as approved (publishing is a dry run until Instagram is connected).") : null,
+        p?.scheduled_at ? h("p", { class: "meta" }, "Goes out: ", when(p.scheduled_at)) : p ? h("p", { class: "meta" }, "After you approve, it goes out when you press \u201cPublish approved posts now\u201d.") : null,
         h("p", { class: "meta" }, `Requested by ${r.requested_by} · ${when(r.created_at)}`),
         actions);
     }) : [h("div", { class: "card empty" }, "Nothing waiting for you. ", h("a", { href: "#/studio" }, "Create content"))]));
   };
   const decide = async (id, approve) => {
     let note = null;
-    if (!approve) { note = prompt("Why reject? (optional, helps future drafts)") ; if (note === null) return; }
-    else if (!confirm("Approve this post for publishing?")) return;
+    if (!approve) { note = await ask("Why reject? (optional, helps future drafts)", { ok: "Reject", danger: true, input: "Reason (optional)" }); if (note === null) return; note = note || null; }
+    else if (!(await ask("Approve this post for publishing?", { ok: "Approve" }))) return;
     try {
       await api(`/approvals/${id}/decision`, { method: "POST", body: { approve, note } });
       toast(approve ? "Approved" : "Rejected");
-      render(await api("/approvals?status=pending")); refreshBadge();
+      refreshBadge(); route();  // reload the whole view so the "Publish approved posts now" card appears
     } catch (e) { toast(e.message); }
   };
   render(items);
   const approved = await api("/posts?status=approved");
   const runNow = async (btn) => {
-    if (!confirm(`Publish ${approved.length} approved post${approved.length > 1 ? "s" : ""} to Instagram now? (Maximum 3 a day.)`)) return;
+    if (!(await ask(`Publish ${approved.length} approved post${approved.length > 1 ? "s" : ""} to Instagram now? It will be public on your account. (Maximum 3 a day.)`, { ok: "Publish now" }))) return;
     btn.disabled = true; btn.replaceChildren(h("span", { class: "spinner" }), "Publishing…");
     try {
       const r = await api("/publish/run", { method: "POST" });
@@ -332,7 +351,7 @@ async function viewSettings() {
   const [o, pol, ig] = await Promise.all([api("/overview"), api("/policies/auto_publish"), api("/instagram/status")]);
   const flag = new URLSearchParams(location.hash.split("?")[1] || "").get("ig");
   const disconnect = async () => {
-    if (!confirm("Disconnect Instagram? Kaam Ka AI will stop being able to post until you connect again.")) return;
+    if (!(await ask("Disconnect Instagram? Kaam Ka AI will stop being able to post until you connect again.", { ok: "Disconnect", danger: true }))) return;
     try { await api("/instagram/disconnect", { method: "POST" }); toast("Instagram disconnected"); route(); } catch (e) { toast(e.message); }
   };
   const igCard = h("div", { class: "card" }, h("h2", {}, "Instagram"),
@@ -349,14 +368,14 @@ async function viewSettings() {
         : h("p", { class: "meta" }, "Waiting for the Instagram app settings to be added in Azure."));
   const toggle = async () => {
     const next = !pol.enabled;
-    if (next && !confirm("Turn on auto-publish? Approved post types could then publish without a per-post click. You can turn it off any time.")) return;
+    if (next && !(await ask("Turn on auto-publish? Approved post types could then publish without a per-post click. You can turn it off any time.", { ok: "Turn on" }))) return;
     try { await api("/policies/auto_publish", { method: "PUT", body: { value: { ...pol, enabled: next } } }); toast(next ? "Auto-publish on" : "Auto-publish off"); route(); }
     catch (e) { toast(e.message); }
   };
   return page("Settings", "Only you can change these. The agent can read them but never change them.",
     h("div", { class: "card" }, h("h2", {}, "Auto-publish"),
       h("p", {}, pol.enabled ? "On." : "Off: every post needs your approval."),
-      h("p", { class: "meta" }, "Not active until Instagram is connected; in development nothing is ever posted."),
+      h("p", { class: "meta" }, o.instagram_connected ? "Scheduled automatic posting is not switched on yet; publish approved posts from Approve." : "Not active until Instagram is connected."),
       h("button", { class: pol.enabled ? "bad" : "secondary", onclick: toggle }, pol.enabled ? "Turn off" : "Turn on")),
     h("div", { class: "card" }, h("h2", {}, "Budget"),
       h("p", {}, `Monthly cap ${inr(o.monthly_budget_inr)} · spent ${inr(o.spent_this_month_inr)}`),

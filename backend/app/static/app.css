@@ -118,3 +118,7 @@ code { font-size: .85em; }
 details summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .slide-edit { border-left: 3px solid var(--indigo); padding-left: 12px; margin: 12px 0; }
 .badge[hidden] { display: none; }
+.sheet-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(10,10,25,.55); display: flex; align-items: flex-end; justify-content: center; padding: 16px; }
+.sheet { background: var(--card); color: var(--ink); border-radius: var(--radius); padding: 18px; width: 100%; max-width: 480px; box-shadow: 0 10px 40px rgba(0,0,0,.3); margin-bottom: env(safe-area-inset-bottom); }
+.sheet textarea { width: 100%; margin: 4px 0 12px; font: inherit; }
+@media (min-width: 700px) { .sheet-backdrop { align-items: center; } }
