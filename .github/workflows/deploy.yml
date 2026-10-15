@@ -17,37 +17,35 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+# Identifiers only (not secrets). GitHub signs in with OIDC; Azure trusts only this repo's main branch.
 env:
   RG: kaamka-rg
   APP: kaamka-app
+  AZURE_CLIENT_ID: cd3c420e-60b4-49c7-88c7-3e078fc7d400
+  AZURE_TENANT_ID: 0247269c-18c6-4907-abe2-4bf639f1034c
+  AZURE_SUBSCRIPTION_ID: d3d45a77-4da7-4de5-8e78-33a78360a0b8
+  ACR_NAME: kaamkaacrd3d45a
 
 jobs:
   deploy:
-    # Skipped (not failed) until the Azure setup script has run and the repository variables exist.
-    if: ${{ vars.ACR_NAME != '' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Check Azure settings exist
-        run: |
-          for v in "${{ vars.AZURE_CLIENT_ID }}" "${{ vars.AZURE_TENANT_ID }}" "${{ vars.AZURE_SUBSCRIPTION_ID }}" "${{ vars.ACR_NAME }}"; do
-            if [ -z "$v" ]; then echo "::error::Azure repository variables are not set yet (see infra/README.md)"; exit 1; fi
-          done
-
       - uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build image in Azure Container Registry
         run: |
           TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
-          az acr build --registry "${{ vars.ACR_NAME }}" --image "kaamka:$TAG" --file Dockerfile . --no-logs
-          echo "IMAGE=${{ vars.ACR_NAME }}.azurecr.io/kaamka:$TAG" >> "$GITHUB_ENV"
+          az acr build --registry "$ACR_NAME" --image "kaamka:$TAG" --file Dockerfile . --no-logs
+          echo "IMAGE=$ACR_NAME.azurecr.io/kaamka:$TAG" >> "$GITHUB_ENV"
 
       - name: Roll out new revision
         run: |

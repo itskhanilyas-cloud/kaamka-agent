@@ -26,7 +26,8 @@ ACR=kaamkaacr$S
 DB=kaamka-db-$S
 KV=kaamka-kv-$S
 ME_ID=$(az ad signed-in-user show --query id -o tsv)
-ME_NAME=$(az ad signed-in-user show --query "mail || userPrincipalName" -o tsv)
+# Personal Microsoft accounts show as "live.com#name@outlook.com"; the dashboard sees "name@outlook.com".
+ME_NAME=$(az account show --query user.name -o tsv | sed 's/^live\.com#//' | tr '[:upper:]' '[:lower:]')
 
 echo "== 1/8 Registering resource providers"
 for p in Microsoft.App Microsoft.OperationalInsights Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.KeyVault; do
@@ -41,10 +42,18 @@ if ! az postgres flexible-server show -n $DB -g $RG >/dev/null 2>&1; then
   PW=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-32)
   az postgres flexible-server create -n $DB -g $RG -l $LOC --tier Burstable --sku-name Standard_B1ms \
     --storage-size 32 --version 16 --admin-user kaadmin --admin-password "$PW" \
-    --public-access 0.0.0.0 --database-name kaamka --backup-retention 7 --yes -o none
+    --public-access 0.0.0.0 --backup-retention 7 --yes -o none
+  # Newer Azure CLI refuses --database-name on create (elastic clusters only), so create it separately.
+  az postgres flexible-server db create -g $RG -s $DB --name kaamka -o none
   NEW_DB_PW=$PW
 fi
 
+# Recovery: server exists but its password never reached Key Vault (an earlier run stopped).
+if [ -z "${NEW_DB_PW:-}" ] && ! az keyvault secret show --vault-name $KV -n db-url >/dev/null 2>&1; then
+  NEW_DB_PW=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-32)
+  az postgres flexible-server update -g $RG -n $DB --admin-password "$NEW_DB_PW" -o none
+  az postgres flexible-server db show -g $RG -s $DB --name kaamka >/dev/null 2>&1 || az postgres flexible-server db create -g $RG -s $DB --name kaamka -o none
+fi
 echo "== 4/8 Key Vault $KV"
 az keyvault show -n $KV -g $RG >/dev/null 2>&1 || az keyvault create -n $KV -g $RG -l $LOC --enable-rbac-authorization true -o none
 KV_ID=$(az keyvault show -n $KV -g $RG --query id -o tsv)
