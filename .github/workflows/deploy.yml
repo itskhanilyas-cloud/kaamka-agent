@@ -41,11 +41,15 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build image in Azure Container Registry
+      # Built on the GitHub runner and pushed (ACR Tasks / `az acr build` is unavailable on free-trial subscriptions).
+      - name: Build and push image
         run: |
           TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
-          az acr build --registry "$ACR_NAME" --image "kaamka:$TAG" --file Dockerfile . --no-logs
-          echo "IMAGE=$ACR_NAME.azurecr.io/kaamka:$TAG" >> "$GITHUB_ENV"
+          IMAGE="$ACR_NAME.azurecr.io/kaamka:$TAG"
+          az acr login --name "$ACR_NAME"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       - name: Roll out new revision
         run: |

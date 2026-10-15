@@ -6,7 +6,7 @@
    At the end it prints six values, none of which are secrets.
 2. **Repository variables.** The IDs printed by the script (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
    and `ACR_NAME`) are written into `.github/workflows/deploy.yml`; they are identifiers, not secrets.
-3. **Deploy.** Every push to `main` runs CI; when it passes, `deploy.yml` builds the image in Azure
+3. **Deploy.** Every push to `main` runs CI; when it passes, `deploy.yml` builds the image on the GitHub runner, pushes it to Azure
    Container Registry, rolls the Container App, and checks `/healthz`.
 
 ## What lives where
