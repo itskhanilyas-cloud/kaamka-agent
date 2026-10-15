@@ -1,0 +1,67 @@
+name: Deploy to Azure
+
+# Runs only after CI passes on main. Signs in to Azure with GitHub's OIDC token (no stored password),
+# builds the image inside Azure Container Registry, rolls the Container App to it, then checks health.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  RG: kaamka-rg
+  APP: kaamka-app
+
+jobs:
+  deploy:
+    # Skipped (not failed) until the Azure setup script has run and the repository variables exist.
+    if: ${{ vars.ACR_NAME != '' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check Azure settings exist
+        run: |
+          for v in "${{ vars.AZURE_CLIENT_ID }}" "${{ vars.AZURE_TENANT_ID }}" "${{ vars.AZURE_SUBSCRIPTION_ID }}" "${{ vars.ACR_NAME }}"; do
+            if [ -z "$v" ]; then echo "::error::Azure repository variables are not set yet (see infra/README.md)"; exit 1; fi
+          done
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build image in Azure Container Registry
+        run: |
+          TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
+          az acr build --registry "${{ vars.ACR_NAME }}" --image "kaamka:$TAG" --file Dockerfile . --no-logs
+          echo "IMAGE=${{ vars.ACR_NAME }}.azurecr.io/kaamka:$TAG" >> "$GITHUB_ENV"
+
+      - name: Roll out new revision
+        run: |
+          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none
+          FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+          echo "FQDN=$FQDN" >> "$GITHUB_ENV"
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$FQDN/healthz" || true)
+            if [ "$code" = "200" ]; then echo "Healthy: https://$FQDN"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::App did not become healthy at https://$FQDN"
+          az containerapp logs show -g "$RG" -n "$APP" --tail 50 --type console || true
+          exit 1

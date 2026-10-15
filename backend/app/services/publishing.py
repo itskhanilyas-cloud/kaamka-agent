@@ -78,6 +78,10 @@ def _claim(db: Session, req: ActionRequest) -> bool:
 def run_due(db: Session, publisher: Publisher, settings: Settings, now: datetime | None = None) -> RunResult:
     now = now or utcnow()
     result = RunResult()
+    if settings.app_env == "production" and isinstance(publisher, DryRunPublisher):
+        # Live system without an Instagram connection: never mark anything "published".
+        audit.record(db, SYSTEM_ACTOR, "publish_skipped_instagram_not_connected", None)
+        return result
     due = db.scalars(select(ActionRequest).join(Post, ActionRequest.post_id == Post.id)
                      .where(ActionRequest.kind == ActionKind.publish_post,
                             ActionRequest.status == ActionStatus.approved,

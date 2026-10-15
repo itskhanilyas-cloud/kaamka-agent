@@ -1,12 +1,13 @@
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
 from .config import get_settings
 from .db import init_engine
+from .security import current_user
 
 STATIC = Path(__file__).parent / "static"
 
@@ -44,6 +45,11 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthz():
         return {"ok": True}
+
+    @app.get("/whoami", include_in_schema=False)
+    def whoami(user: str = Depends(current_user)):
+        # Shows the signed-in identity so the owner can confirm KA_OWNER_EMAIL. Requires sign-in.
+        return {"signed_in_as": user, "is_owner": user == settings.owner_email.lower()}
 
     # The dashboard shell holds no data; every number comes from /api, which requires the owner.
     app.mount("/static", StaticFiles(directory=STATIC), name="static")

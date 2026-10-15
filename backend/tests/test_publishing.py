@@ -88,3 +88,11 @@ def test_permanent_error_is_not_retried(db, settings_env):
     publishing.run_due(db, pub, settings_env)
     publishing.run_due(db, pub, settings_env)
     assert pub.calls == 1 and req.status == ActionStatus.failed
+
+
+def test_production_without_instagram_never_marks_published(db, settings_env, monkeypatch):
+    monkeypatch.setattr(settings_env, "app_env", "production")
+    post, req = _approved_post(db)
+    pub = publishing.get_publisher(settings_env, None)  # no real Instagram publisher yet
+    result = publishing.run_due(db, pub, settings_env)
+    assert result.published == 0 and post.status == PostStatus.approved and req.status == ActionStatus.approved

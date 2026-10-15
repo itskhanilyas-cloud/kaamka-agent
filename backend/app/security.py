@@ -24,5 +24,6 @@ def current_user(request: Request, settings: Settings = Depends(get_settings)) -
 
 def require_owner(user: str = Depends(current_user), settings: Settings = Depends(get_settings)) -> str:
     if user != settings.owner_email.lower():
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "owner only")
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            f"Signed in as {user}, which is not the owner account set in KA_OWNER_EMAIL.")
     return user

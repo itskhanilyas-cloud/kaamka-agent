@@ -33,3 +33,15 @@ def test_dev_bypass_refused_in_production(monkeypatch):
 def test_secrets_never_appear_in_overview(client, monkeypatch):
     body = client.get("/api/overview", headers=as_owner()).text
     assert "api_key" not in body and "secret" not in body.lower()
+
+
+def test_whoami_requires_sign_in_and_reports_owner(client):
+    assert client.get("/whoami").status_code == 401
+    r = client.get("/whoami", headers=as_stranger()).json()
+    assert r == {"signed_in_as": "someone@else.com", "is_owner": False}
+    assert client.get("/whoami", headers=as_owner()).json()["is_owner"] is True
+
+
+def test_forbidden_message_names_the_signed_in_account(client):
+    r = client.get("/api/overview", headers=as_stranger())
+    assert "someone@else.com" in r.json()["detail"]
