@@ -3,7 +3,8 @@ import hashlib
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
@@ -67,6 +68,29 @@ def create_app() -> FastAPI:
     index_html = ((STATIC / "index.html").read_text()
                   .replace("/static/app.js", f"/static/app.js?v={_ver('app.js')}")
                   .replace("/static/app.css", f"/static/app.css?v={_ver('app.css')}"))
+
+    # "Add to Home Screen" files. Public on purpose (phones fetch them without the sign-in cookie);
+    # they contain only the app name and icons. Easy Auth excludes /public/app/*.
+    manifest = {
+        "name": "Kaam Ka AI", "short_name": "Kaam Ka AI", "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#FAF7F2", "theme_color": "#3D3BF3",
+        "icons": [
+            {"src": "/public/app/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/public/app/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/public/app/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }
+    ICONS = {"icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"}
+
+    @app.get("/public/app/manifest.webmanifest", include_in_schema=False)
+    def web_manifest():
+        return JSONResponse(manifest, media_type="application/manifest+json", headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/public/app/{name}", include_in_schema=False)
+    def app_icon(name: str):
+        if name not in ICONS:
+            raise HTTPException(404, "not found")
+        return FileResponse(STATIC / "icons" / name, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/", include_in_schema=False)
     def dashboard():

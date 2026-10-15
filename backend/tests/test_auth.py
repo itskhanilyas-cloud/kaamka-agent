@@ -45,3 +45,11 @@ def test_whoami_requires_sign_in_and_reports_owner(client):
 def test_forbidden_message_names_the_signed_in_account(client):
     r = client.get("/api/overview", headers=as_stranger())
     assert "someone@else.com" in r.json()["detail"]
+
+
+def test_home_screen_files_are_public_and_limited(client):
+    m = client.get("/public/app/manifest.webmanifest")
+    assert m.status_code == 200 and m.json()["start_url"] == "/"
+    assert client.get("/public/app/icon-192.png").headers["content-type"] == "image/png"
+    assert client.get("/public/app/app.js").status_code == 404
+    assert client.get("/public/app/..%2Fapp.js").status_code == 404
