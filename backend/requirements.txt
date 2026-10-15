@@ -3,3 +3,5 @@ uvicorn==0.53.0
 SQLAlchemy==2.1.4
 pydantic-settings==2.16.0
 psycopg[binary]>=3.2,<4
+openai==3.31.0
+azure-identity==1.26.0

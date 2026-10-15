@@ -27,10 +27,18 @@ class Settings(BaseSettings):
     monthly_budget_inr: float = 4000.0
     max_posts_per_day: int = 3
 
-    # Secrets: never logged, never sent to the browser.
+    # Text generation. "mock" needs nothing and costs nothing; "azure_openai" is the real model.
+    text_provider: Literal["mock", "azure_openai"] = "mock"
     azure_openai_endpoint: str | None = None
-    azure_openai_api_key: SecretStr | None = None
     azure_openai_deployment: str | None = None
+    text_max_output_tokens: int = 4000
+    # INR per 1M tokens. Conservative defaults; set from the Azure pricing page for your model.
+    text_price_in_inr_per_m: float = 100.0
+    text_price_out_inr_per_m: float = 600.0
+
+    # Secrets: never logged, never sent to the browser.
+    # Only for local use; in Azure the app signs in with its managed identity instead.
+    azure_openai_api_key: SecretStr | None = None
     instagram_app_secret: SecretStr | None = None
     token_encryption_key: SecretStr | None = None
 

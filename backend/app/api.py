@@ -48,11 +48,48 @@ class RevenueIn(BaseModel):
     post_id: str | None = None
 
 
+class GenerateIn(BaseModel):
+    idea: str
+    media_type: MediaType
+    pillar: str
+    variants: int = 3
+    has_affiliate_link: bool = False
+    test_notes: str | None = None
+
+
 def _post_out(p: Post) -> dict:
     return {"id": p.id, "media_type": p.media_type.value, "caption": p.caption, "media_urls": p.media_urls,
             "pillar": p.pillar, "has_affiliate_link": p.has_affiliate_link, "status": p.status.value,
             "scheduled_at": p.scheduled_at, "published_at": p.published_at, "ig_media_id": p.ig_media_id,
-            "last_error": p.last_error, "checks": approvals.check_post_ready(p)}
+            "last_error": p.last_error, "content": p.content, "quality": p.quality,
+            "generated_by": p.generated_by, "is_mock": p.generated_by == "MOCK",
+            "checks": approvals.check_post_ready(p)}
+
+
+@router.post("/studio/generate", status_code=201)
+def studio_generate(body: GenerateIn, db: Session = Depends(get_db), user: str = Depends(require_owner),
+                    settings: Settings = Depends(get_settings)):
+    from .ai import generator, providers
+
+    try:
+        provider = providers.get_text_provider(settings)
+        drafts = generator.generate(
+            db, provider, idea=body.idea, media_type=body.media_type.value, pillar=body.pillar,
+            variants=body.variants, has_affiliate_link=body.has_affiliate_link, test_notes=body.test_notes,
+            pricing=generator.Pricing(settings.text_price_in_inr_per_m, settings.text_price_out_inr_per_m),
+            monthly_cap_inr=settings.monthly_budget_inr, max_output_tokens=settings.text_max_output_tokens,
+            actor=user)
+    except generator.GenerationError as e:
+        db.rollback()
+        raise HTTPException(422, str(e))
+    except budget.BudgetExceeded as e:
+        db.commit()  # keep the audit record of the block
+        raise HTTPException(402, str(e))
+    except providers.ProviderError as e:
+        db.commit()
+        raise HTTPException(502, str(e))
+    db.commit()
+    return {"provider": provider.name, "drafts": drafts}
 
 
 def _req_out(r: ActionRequest) -> dict:

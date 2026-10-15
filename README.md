@@ -3,11 +3,12 @@
 An approval-first agent that plans, creates and publishes Instagram content for a faceless
 "practical AI tools" brand, and tracks costs and revenue honestly.
 
-**Status: Phase 3 foundation.** Backend API, database schema, approval workflow, owner-only
-policies, monthly budget cap, duplicate-safe publish worker (dry run only), revenue ledger,
-audit log with secret redaction, Docker image and CI. 32 automated tests pass.
-Not yet built: dashboard UI (Phase 5), AI generation (Phase 4), Instagram connection (Phase 6),
-Azure deployment (Phase 10).
+**Status: Phase 4 (text generation).** Phase 3 foundation plus the Content Studio: AI-written
+captions, hooks, carousel slides and Reel scripts in the brand voice, 1-4 variants per idea,
+each scored by a quality checklist and saved as a draft. 49 automated tests pass.
+Azure OpenAI (`kaamka-ai-4856`, deployment `text-main` = gpt-5.4-mini) is created; the live call is
+verified after the first Azure deployment, because Claude's build workspace cannot reach Azure.
+Not yet built: images and video (Phase 4b), dashboard UI (Phase 5), Instagram (Phase 6), Azure deployment (Phase 10).
 
 ## Safety rules enforced in code
 
@@ -71,6 +72,19 @@ GitHub will ask you to sign in in your browser. CI then runs the tests, a secret
 | GET | `/api/revenue/summary` | Confirmed vs estimated revenue, costs, profit |
 | POST | `/api/revenue` | Record revenue (confirmed needs evidence) |
 | GET | `/api/audit` | Latest audit events |
+| POST | `/api/studio/generate` | `{"idea", "media_type": IMAGE/CAROUSEL/REELS, "pillar", "variants": 1-4, "has_affiliate_link", "test_notes"}` → scored drafts |
+
+Pillars: `tool_test`, `workflow`, `prompts`, `news`, `career` (see `app/ai/brand.py`).
+
+## Content Studio safeguards
+
+- Budget is reserved **before** the model is called; the call is refused if it would break the monthly cap.
+  The estimate is replaced by the measured token cost afterwards.
+- The brand prompt forbids invented test results, guarantees, real people and investment/medical/legal advice.
+- Quality checklist (`app/ai/quality.py`): hook ≤ 12 words, caption 80-2,200 characters, 3-8 hashtags, call to
+  action, no over-claiming, affiliate disclosure, carousel 3-10 slides of ≤ 30 words, Reel hook in seconds 0-3, alt text.
+  Blocking failures are flagged; variants are returned best first.
+- Mock output is labelled `[MOCK DRAFT]` and `is_mock: true` everywhere, so it can never be mistaken for real content.
 
 ## Database tables
 

@@ -70,6 +70,10 @@ class Post(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ig_media_id: Mapped[str | None] = mapped_column(String(64))
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Structured draft from the Content Studio: hook, slides or Reel script, alt text, hashtags.
+    content: Mapped[dict | None] = mapped_column(JSON)
+    quality: Mapped[dict | None] = mapped_column(JSON)
+    generated_by: Mapped[str | None] = mapped_column(String(64))  # model name, or "MOCK"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
