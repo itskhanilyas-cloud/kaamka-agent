@@ -1,7 +1,7 @@
 """REST API used by the dashboard. Every route requires the signed-in owner."""
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from fastapi.responses import Response
@@ -128,7 +128,7 @@ def overview(db: Session = Depends(get_db), settings: Settings = Depends(get_set
             "spent_this_month_inr": budget.spent_this_month(db), "monthly_budget_inr": settings.monthly_budget_inr,
             "auto_publish": policy.get_policy(db, "auto_publish"), "text_provider": settings.text_provider,
             "instagram_connected": _ig_connected(db), "instagram_configured": settings.instagram_ready,
-            "data_note": "Reach, views and saves appear once metrics syncing is built (Phase 7)."}
+            "data_note": "Views, reach, saves and followers: More → Results (updated every 6 hours)."}
 
 
 def _ig_connected(db: Session) -> bool:
@@ -195,6 +195,38 @@ def render_post(post_id: str, db: Session = Depends(get_db), user: str = Depends
         raise HTTPException(422, str(e))
     db.commit()
     return _post_out(p)
+
+
+@router.post("/posts/{post_id}/video")
+async def upload_video(post_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_owner)):
+    """Raw MP4 body (Content-Type: video/mp4). Replaces the Reel's video."""
+    p = db.get(Post, post_id) or _404()
+    size = int(request.headers.get("content-length") or 0)
+    if size > render_service.MAX_VIDEO_BYTES:
+        raise HTTPException(413, "video is larger than 100 MB")
+    data = await request.body()
+    try:
+        render_service.attach_video(db, p, data, user)
+    except render_service.RenderError as e:
+        raise HTTPException(422, str(e))
+    db.commit()
+    return _post_out(p)
+
+
+@router.get("/analytics")
+def analytics(db: Session = Depends(get_db)):
+    from .services import analytics as an
+    return an.summary(db)
+
+
+@router.post("/analytics/refresh", status_code=202)
+def refresh_analytics(background: BackgroundTasks, settings: Settings = Depends(get_settings),
+                      user: str = Depends(require_owner)):
+    if not settings.instagram_ready:
+        raise HTTPException(409, "Instagram is not configured")
+    from .instagram.routes import sync_metrics_job
+    background.add_task(sync_metrics_job, settings, user)
+    return {"started": True}
 
 
 @router.get("/media/{media_id}")

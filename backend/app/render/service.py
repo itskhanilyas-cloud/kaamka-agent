@@ -46,7 +46,7 @@ def render_post(db: Session, post: Post, actor: str, brand: t.Brand | None = Non
     if not hook and not (c.get("slides")):
         raise RenderError("post has no hook or slides to render")
 
-    db.execute(delete(Media).where(Media.post_id == post.id))
+    db.execute(delete(Media).where(Media.post_id == post.id, Media.kind != "video"))  # an uploaded video stays
     made: list[Media] = []
 
     if post.media_type == MediaType.carousel:
@@ -72,15 +72,43 @@ def render_post(db: Session, post: Post, actor: str, brand: t.Brand | None = Non
         post.media_urls = [MEDIA_PREFIX + made[0].id]
 
     elif post.media_type == MediaType.reel:
-        # Cover only; the Reel video itself is produced in a later phase, so it is not publishable yet.
+        # The cover is drawn here; the video itself is uploaded by the owner (attach_video).
         jpeg = t.cover(hook, "", post.pillar, brand, height=1920)
-        made.append(_store(db, post, 0, "cover", jpeg))
-        post.media_urls = []
+        made.append(_store(db, post, 1, "cover", jpeg))
+        video = _video(db, post.id)
+        post.media_urls = [MEDIA_PREFIX + video.id] if video else []
     else:
         raise RenderError(f"no template for {post.media_type.value}")
 
     audit.record(db, actor, "media_rendered", post.id, images=len(made), format=post.media_type.value)
     return made
+
+
+MAX_VIDEO_BYTES = 100 * 1024 * 1024
+
+
+def _video(db: Session, post_id: str) -> Media | None:
+    return db.scalar(select(Media).where(Media.post_id == post_id, Media.kind == "video"))
+
+
+def attach_video(db: Session, post: Post, data: bytes, actor: str) -> Media:
+    """Stores an MP4 for a Reel (replacing any earlier one). Instagram fetches it via a signed link."""
+    if post.media_type != MediaType.reel:
+        raise RenderError("only Reels take a video")
+    if post.status not in EDITABLE:
+        raise RenderError(f"cannot change a post that is {post.status.value}")
+    if len(data) > MAX_VIDEO_BYTES:
+        raise RenderError("video is larger than 100 MB")
+    if len(data) < 1024 or data[4:8] != b"ftyp":
+        raise RenderError("that file is not an MP4 video")
+    db.execute(delete(Media).where(Media.post_id == post.id, Media.kind == "video"))
+    m = Media(post_id=post.id, position=0, kind="video", mime="video/mp4", width=1080, height=1920,
+              sha256=hashlib.sha256(data).hexdigest(), data=data)
+    db.add(m)
+    db.flush()
+    post.media_urls = [MEDIA_PREFIX + m.id]
+    audit.record(db, actor, "video_attached", post.id, bytes=len(data))
+    return m
 
 
 def media_for(db: Session, post_id: str) -> list[Media]:

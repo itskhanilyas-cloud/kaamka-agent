@@ -1,4 +1,9 @@
-"""Entry point for Container Apps Jobs: `python -m app.jobs publish`."""
+"""Entry point for Container Apps Jobs.
+
+  python -m app.jobs publish        every 15 min: approved posts whose scheduled time has come
+  python -m app.jobs sync-metrics   every 6 h: views, reach, likes, saves, shares, followers
+  python -m app.jobs refresh-token  daily: renews Instagram access well before it expires
+"""
 import sys
 
 from .config import get_settings
@@ -13,28 +18,30 @@ def main(argv: list[str]) -> int:
     db = next(get_db())
     try:
         if job == "publish":
-            real = None
-            if settings.app_env == "production" and settings.instagram_ready:
-                from .instagram.routes import client_for
-                from .instagram.service import InstagramPublisher, NotConfigured
-                try:
-                    real = InstagramPublisher(db, client_for(settings), settings.token_encryption_key.get_secret_value(),
-                                              settings.public_base_url)
-                except NotConfigured:
-                    real = None
-            result = publishing.run_due(db, publishing.get_publisher(settings, real), settings)
+            from .instagram.routes import publisher_for
+            real = publisher_for(db, settings)
+            result = publishing.run_due(db, publishing.get_publisher(settings, real), settings, scheduled_only=True)
             db.commit()
-            print(f"publish job: {result}")
+            print(f"publish job: {result} dry_run={real is None}")
             return 0
+        if job in ("refresh-token", "sync-metrics") and not settings.instagram_ready:
+            print("instagram not configured"); return 0
         if job == "refresh-token":
-            if not settings.instagram_ready:
-                print("instagram not configured"); return 0
             from .instagram.routes import client_for
             from .instagram.service import refresh_if_due
             print("token:", refresh_if_due(db, client_for(settings), settings.token_encryption_key.get_secret_value(), "system:agent"))
             db.commit()
             return 0
-        print(f"unknown job '{job}'. Available: publish, refresh-token")
+        if job == "sync-metrics":
+            from .instagram.routes import client_for
+            from .instagram.service import NotConfigured, sync_metrics
+            try:
+                print("metrics:", sync_metrics(db, client_for(settings), settings.token_encryption_key.get_secret_value()))
+            except NotConfigured as e:
+                print(e); return 0
+            db.commit()
+            return 0
+        print(f"unknown job '{job}'. Available: publish, sync-metrics, refresh-token")
         return 2
     finally:
         db.close()

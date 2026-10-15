@@ -75,7 +75,10 @@ def _claim(db: Session, req: ActionRequest) -> bool:
     return False
 
 
-def run_due(db: Session, publisher: Publisher, settings: Settings, now: datetime | None = None) -> RunResult:
+def run_due(db: Session, publisher: Publisher, settings: Settings, now: datetime | None = None,
+            scheduled_only: bool = False) -> RunResult:
+    """scheduled_only=True is used by the timer job: it publishes only approved posts the owner gave a
+    time to. Approved posts without a time wait for the owner's "Publish now" button."""
     now = now or utcnow()
     result = RunResult()
     if settings.app_env == "production" and isinstance(publisher, DryRunPublisher):
@@ -85,7 +88,8 @@ def run_due(db: Session, publisher: Publisher, settings: Settings, now: datetime
     due = db.scalars(select(ActionRequest).join(Post, ActionRequest.post_id == Post.id)
                      .where(ActionRequest.kind == ActionKind.publish_post,
                             ActionRequest.status == ActionStatus.approved,
-                            (Post.scheduled_at.is_(None)) | (Post.scheduled_at <= now))
+                            (Post.scheduled_at <= now) if scheduled_only
+                            else ((Post.scheduled_at.is_(None)) | (Post.scheduled_at <= now)))
                      .order_by(Post.scheduled_at)).all()
     for req in due:
         post = req.post

@@ -89,7 +89,7 @@ class Media(Base):
     width: Mapped[int] = mapped_column(Integer)
     height: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str] = mapped_column(String(64))
-    data: Mapped[bytes] = mapped_column(LargeBinary)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)  # loaded only when served
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -174,3 +174,28 @@ class Policy(Base):
     value: Mapped[dict] = mapped_column(JSON)
     updated_by: Mapped[str] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PostMetric(Base):
+    """One snapshot of Instagram's numbers for a published post (history kept for trends)."""
+    __tablename__ = "post_metrics"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[str] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    views: Mapped[int | None] = mapped_column(Integer)
+    reach: Mapped[int | None] = mapped_column(Integer)
+    likes: Mapped[int | None] = mapped_column(Integer)
+    comments: Mapped[int | None] = mapped_column(Integer)
+    saved: Mapped[int | None] = mapped_column(Integer)
+    shares: Mapped[int | None] = mapped_column(Integer)
+    total_interactions: Mapped[int | None] = mapped_column(Integer)
+    avg_watch_ms: Mapped[int | None] = mapped_column(Integer)  # Reels only
+
+
+class AccountSnapshot(Base):
+    """Follower count over time."""
+    __tablename__ = "account_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    followers: Mapped[int | None] = mapped_column(Integer)
+    media_count: Mapped[int | None] = mapped_column(Integer)

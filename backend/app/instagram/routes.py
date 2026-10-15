@@ -1,6 +1,8 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import threading
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,7 @@ from .client import InstagramClient, InstagramError
 
 router = APIRouter()
 STATE_TTL = timedelta(minutes=15)
+_LOCK = threading.Lock()  # one publish run at a time in this process
 
 
 def client_for(settings: Settings) -> InstagramClient:
@@ -68,22 +71,66 @@ def callback(code: str | None = None, state: str | None = None, error: str | Non
     return RedirectResponse("/#/settings?ig=connected", status_code=302)
 
 
-@router.post("/api/publish/run")
-def publish_now(db: Session = Depends(get_db), user: str = Depends(require_owner), settings: Settings = Depends(get_settings)):
-    """Owner-triggered run of the publish worker: posts only approved, due posts (max per day applies)."""
-    from ..services import publishing
-    real = None
+def _session():
+    from ..db import get_db as _get
+    return next(_get())
+
+
+def publisher_for(db: Session, settings: Settings):
+    """The real Instagram publisher in production when connected; otherwise None (dry run)."""
     if settings.app_env == "production" and settings.instagram_ready:
         try:
-            real = service.InstagramPublisher(db, client_for(settings), settings.token_encryption_key.get_secret_value(),
+            return service.InstagramPublisher(db, client_for(settings), settings.token_encryption_key.get_secret_value(),
                                               settings.public_base_url)
         except service.NotConfigured:
-            raise HTTPException(409, "Connect Instagram first (Settings → Connect Instagram)")
+            return None
+    return None
+
+
+def publish_job(settings: Settings, actor: str) -> None:
+    """Runs after the response (a Reel can take minutes to process). Uses its own DB session."""
+    from ..services import publishing
+    with _LOCK:
+        db = _session()
+        try:
+            real = publisher_for(db, settings)
+            result = publishing.run_due(db, publishing.get_publisher(settings, real), settings)
+            audit.record(db, actor, "publish_run_finished", None, published=result.published, failed=result.failed,
+                         retry_later=result.retried, deferred_daily_cap=result.skipped_cap, dry_run=real is None)
+            db.commit()
+        except Exception as e:  # never lose the reason
+            db.rollback()
+            audit.record(db, actor, "publish_run_error", None, error=str(e)[:300])
+            db.commit()
+        finally:
+            db.close()
+
+
+def sync_metrics_job(settings: Settings, actor: str) -> None:
+    db = _session()
+    try:
+        result = service.sync_metrics(db, client_for(settings), settings.token_encryption_key.get_secret_value())
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        audit.record(db, actor, "metrics_sync_error", None, error=str(e)[:300])
+        db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/api/publish/run", status_code=202)
+def publish_now(background: BackgroundTasks, db: Session = Depends(get_db), user: str = Depends(require_owner),
+                settings: Settings = Depends(get_settings)):
+    """Owner-triggered: publishes approved posts that are due (max per day applies). Runs in the background."""
+    real = publisher_for(db, settings)
+    if settings.app_env == "production" and settings.instagram_ready and real is None:
+        raise HTTPException(409, "Connect Instagram first (Settings → Connect Instagram)")
     audit.record(db, user, "publish_run_requested", None)
-    result = publishing.run_due(db, publishing.get_publisher(settings, real), settings)
     db.commit()
-    return {"published": result.published, "failed": result.failed, "retry_later": result.retried,
-            "deferred_daily_cap": result.skipped_cap, "dry_run": real is None}
+    background.add_task(publish_job, settings, user)
+    return {"started": True, "dry_run": real is None}
 
 
 @router.post("/api/instagram/disconnect")
@@ -95,6 +142,7 @@ def disconnect(db: Session = Depends(get_db), user: str = Depends(require_owner)
 
 # Public, unauthenticated, but only with a valid short-lived signature for one image.
 @router.get("/public/media/{media_id}.jpg")
+@router.get("/public/media/{media_id}.mp4")
 def public_media(media_id: str, exp: int = Query(...), sig: str = Query(..., max_length=128),
                  db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     if not settings.token_encryption_key or not service.verify_media(
@@ -103,4 +151,4 @@ def public_media(media_id: str, exp: int = Query(...), sig: str = Query(..., max
     m = db.get(Media, media_id)
     if not m:
         raise HTTPException(404, "not found")
-    return Response(m.data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})
+    return Response(m.data, media_type=m.mime, headers={"Cache-Control": "private, max-age=600"})

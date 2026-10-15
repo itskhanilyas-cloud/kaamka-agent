@@ -122,3 +122,5 @@ details summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 .sheet { background: var(--card); color: var(--ink); border-radius: var(--radius); padding: 18px; width: 100%; max-width: 480px; box-shadow: 0 10px 40px rgba(0,0,0,.3); margin-bottom: env(safe-area-inset-bottom); }
 .sheet textarea { width: 100%; margin: 4px 0 12px; font: inherit; }
 @media (min-width: 700px) { .sheet-backdrop { align-items: center; } }
+.reel { display: block; width: 100%; max-width: 300px; aspect-ratio: 9 / 16; border-radius: 12px; background: #000; margin-bottom: 8px; }
+.stat .v.small { font-size: 1rem; }

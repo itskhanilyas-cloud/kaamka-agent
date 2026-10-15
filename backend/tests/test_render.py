@@ -40,12 +40,28 @@ def test_image_post_renders_single_cover(db):
     assert len(made) == 1 and _img(made[0].data).size == (1080, 1350)
 
 
-def test_reel_gets_cover_but_stays_unsubmittable(db):
+MP4 = b"\x00\x00\x00\x20ftypisom" + b"\x00" * 2048
+
+
+def test_reel_needs_a_video_before_it_can_be_submitted(db):
     from app.services.approvals import check_post_ready
     p = _post(db, MediaType.reel)
     made = service.render_post(db, p, OWNER)
     assert made[0].kind == "cover" and _img(made[0].data).size == (1080, 1920)
-    assert p.media_urls == [] and any("Reel video" in c for c in check_post_ready(p))
+    assert p.media_urls == [] and any("video" in c for c in check_post_ready(p))
+    v = service.attach_video(db, p, MP4, OWNER)
+    assert p.media_urls == ["media:" + v.id] and not any("video" in c for c in check_post_ready(p))
+    service.render_post(db, p, OWNER)  # re-rendering the cover keeps the uploaded video
+    assert p.media_urls == ["media:" + v.id]
+
+
+def test_attach_video_rejects_non_mp4_and_non_reels(db):
+    import pytest
+    p = _post(db, MediaType.reel)
+    with pytest.raises(service.RenderError):
+        service.attach_video(db, p, b"\xff\xd8\xff" + b"0" * 4000, OWNER)
+    with pytest.raises(service.RenderError):
+        service.attach_video(db, _post(db, MediaType.image), MP4, OWNER)
 
 
 def test_rerender_replaces_old_images(db):

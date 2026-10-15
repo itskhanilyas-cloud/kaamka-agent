@@ -59,6 +59,12 @@ jobs:
             az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none && break
             [ "$i" = 3 ] && exit 1; echo "retrying in 30s"; sleep 30
           done
+          # Scheduled jobs (Phase 7) run the same image; skipped if they haven't been created yet.
+          for JOB in kaamka-job-publish kaamka-job-metrics kaamka-job-token; do
+            if az containerapp job show -g "$RG" -n "$JOB" --query name -o tsv >/dev/null 2>&1; then
+              az containerapp job update -g "$RG" -n "$JOB" --image "$IMAGE" --output none || echo "::warning::could not update $JOB"
+            fi
+          done
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           echo "FQDN=$FQDN" >> "$GITHUB_ENV"
 

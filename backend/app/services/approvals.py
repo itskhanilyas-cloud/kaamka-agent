@@ -35,7 +35,7 @@ def check_post_ready(post: Post) -> list[str]:
         if not any(tag in head for tag in AFFILIATE_DISCLOSURES):
             problems.append("affiliate post must start with a clear disclosure (#Ad or #Affiliate) in the first 150 characters")
     if post.media_type == "REELS" and not post.media_urls:
-        problems.append("Reel video production arrives in a later phase; Reels can't be submitted yet")
+        problems.append("no video yet: upload the Reel's MP4 first")
     elif not post.media_urls:
         problems.append("no images yet: render the slides first")
     if post.media_type == "CAROUSEL" and not (2 <= len(post.media_urls) <= 10):

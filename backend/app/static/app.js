@@ -89,13 +89,18 @@ function segmented(options, value, onChange) {
 function contentPreview(content, mediaType, caption, media) {
   const c = content || {};
   const parts = [];
-  const shots = (media || []).filter((m) => m.kind === "slide" || mediaType === "REELS");
+  const video = (media || []).find((m) => m.kind === "video");
+  const shots = (media || []).filter((m) => m.kind === "slide" || (mediaType === "REELS" && m.kind === "cover"));
   if (c.hook && !shots.length) parts.push(h("p", { class: "hook" }, c.hook));
-  if (shots.length) {
+  if (video) {
+    const cover = shots[0];
+    parts.push(h("video", { class: "reel", src: video.url, controls: true, playsinline: true, muted: true, preload: "metadata",
+      poster: cover ? cover.url : null, "aria-label": "Reel video" }));
+  } else if (shots.length) {
     parts.push(h("div", { class: "slides", "aria-label": "Post images" },
       shots.map((m, i) => h("img", { class: mediaType === "REELS" ? "shot tall" : "shot", src: m.url, loading: "lazy",
         alt: `${mediaType === "REELS" ? "Reel cover" : "Slide " + (i + 1)}${c.slides?.[i]?.title ? ": " + c.slides[i].title : c.hook ? ": " + c.hook : ""}` }))));
-    if (mediaType === "REELS") parts.push(h("p", { class: "meta" }, "Reel cover only. The video itself arrives in a later phase."));
+    if (mediaType === "REELS") parts.push(h("p", { class: "meta" }, "Cover only so far. Upload the Reel's MP4 below."));
   } else if (mediaType === "CAROUSEL" && Array.isArray(c.slides)) {
     parts.push(h("div", { class: "slides", "aria-label": "Carousel slides" },
       c.slides.map((s, i) => h("div", { class: "slide" }, h("b", {}, s.title || ""), h("span", {}, s.body || ""), h("small", {}, `${i + 1} / ${c.slides.length}`)))));
@@ -225,13 +230,13 @@ async function viewApprovals() {
     btn.disabled = true; btn.replaceChildren(h("span", { class: "spinner" }), "Publishing…");
     try {
       const r = await api("/publish/run", { method: "POST" });
-      toast(r.dry_run ? "Test mode: nothing was posted" : `Published ${r.published}${r.failed ? `, ${r.failed} failed` : ""}${r.deferred_daily_cap ? `, ${r.deferred_daily_cap} wait for tomorrow` : ""}`);
-      route();
+      toast(r.dry_run ? "Test mode: nothing will be posted" : "Publishing started. Photos take about a minute, Reels up to 5. Check Posts.");
+      setTimeout(route, 4000);
     } catch (e) { toast(e.message); btn.disabled = false; btn.replaceChildren("Publish approved posts now"); }
   };
   const publishCard = approved.length ? h("div", { class: "card", style: "border-color:var(--green)" },
     h("p", {}, h("b", {}, `${approved.length} approved post${approved.length > 1 ? "s" : ""} ready to go.`)),
-    h("p", { class: "meta" }, "Scheduled posts go out at their time once automatic posting is switched on; until then, publish from here."),
+    h("p", { class: "meta" }, "These have no publish time, so they go out when you press this. Posts you gave a time go out by themselves at that time (checked every 15 minutes)."),
     h("button", { class: "good", onclick: (e) => runNow(e.currentTarget) }, "Publish approved posts now")) : null;
   return page("Approval Center", "Nothing is published, sent or spent without your OK here.", publishCard, list);
 }
@@ -275,6 +280,18 @@ async function viewPost(id) {
        h("input", { id: "hook", type: "text", maxlength: 200, value: draft.hook, oninput: (e) => { draft.hook = e.target.value; contentDirty = true; } })];
   const toLocal = (s) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
 
+  const upload = async (input) => {
+    const f = input.files[0];
+    if (!f) return;
+    if (f.size > 100 * 1024 * 1024) { toast("Video is larger than 100 MB"); return; }
+    input.disabled = true; toast("Uploading video…");
+    try {
+      const res = await fetch(`/api/posts/${id}/video`, { method: "POST", body: f, headers: { "Content-Type": "video/mp4" }, credentials: "same-origin" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || res.statusText);
+      toast("Video added"); route();
+    } catch (e) { toast(e.message); input.disabled = false; }
+  };
   const save = async () => {
     try { await api(`/posts/${id}`, { method: "PATCH", body: body() }); toast(contentDirty ? "Saved and images updated" : "Saved"); route(); } catch (e) { toast(e.message); }
   };
@@ -293,6 +310,9 @@ async function viewPost(id) {
       h("details", { open: !p.media.length },
         h("summary", {}, p.media_type === "CAROUSEL" ? "Slide text (updates the images)" : "Headline (updates the image)"),
         slideEditor),
+      p.media_type === "REELS" ? h("div", {},
+        h("label", { for: "vid" }, p.media.some((m) => m.kind === "video") ? "Replace the video (MP4, 9:16, up to 100 MB)" : "Reel video (MP4, 9:16, up to 100 MB)"),
+        h("input", { id: "vid", type: "file", accept: "video/mp4", onchange: (e) => upload(e.target) })) : null,
       h("label", { for: "cap" }, "Caption (with hashtags)"),
       h("textarea", { id: "cap", style: "min-height:200px", oninput: (e) => (edits.caption = e.target.value) }, p.caption),
       h("label", { for: "when" }, "Publish time (optional)"),
@@ -312,7 +332,7 @@ async function viewPost(id) {
 function viewMore() {
   return page("More", null, h("nav", { class: "card menu" },
     [["#/money", "Money", "Revenue, costs, profit"], ["#/settings", "Settings", "Auto-publish, budget, accounts"],
-      ["#/audit", "Audit log", "Every important action"], ["#/trends", "Trend Lab", "Coming in Phase 7"], ["#/analytics", "Analytics", "After Instagram connects"]]
+      ["#/analytics", "Results", "Views, reach, saves, followers"], ["#/audit", "Audit log", "Every important action"], ["#/trends", "Trend Lab", "Coming in Phase 8"]]
       .map(([href, l, d]) => h("a", { href }, l, h("span", {}, d)))));
 }
 
@@ -393,14 +413,43 @@ async function viewAudit() {
       : h("p", { class: "empty" }, "No events yet.")));
 }
 
+async function viewAnalytics() {
+  const a = await api("/analytics");
+  const n = (v) => (v == null ? "–" : Number(v).toLocaleString("en-IN"));
+  const pct = (v) => (v == null ? "–" : (v * 100).toFixed(1) + "%");
+  const refresh = async (btn) => {
+    btn.disabled = true; btn.replaceChildren(h("span", { class: "spinner" }), "Fetching from Instagram…");
+    try { await api("/analytics/refresh", { method: "POST" }); setTimeout(route, 6000); }
+    catch (e) { toast(e.message); btn.disabled = false; btn.replaceChildren("Refresh numbers now"); }
+  };
+  const t = a.totals;
+  return page("Results", "Real numbers from Instagram only. Updated every 6 hours.",
+    h("div", { class: "grid four" },
+      [["Followers", a.followers], ["Views", t.views], ["Saves", t.saved], ["Shares", t.shares]]
+        .map(([k, v]) => h("div", { class: "stat" }, h("div", { class: "k" }, k), h("div", { class: "v" }, n(v))))),
+    h("div", { class: "card" }, h("h2", {}, "What the numbers say"),
+      h("ul", { class: "list" }, a.lessons.map((l) => h("li", {}, l)))),
+    a.posts.length ? a.posts.map((r) => h("a", { href: `#/post/${r.id}`, class: "card", style: "display:block;text-decoration:none;color:inherit" },
+      h("div", { class: "row" }, h("span", { class: "tag" }, FORMAT_LABEL[r.format] || r.format), h("span", { class: "meta" }, when(r.published_at))),
+      h("p", {}, h("b", {}, r.hook)),
+      r.has_data
+        ? h("div", { class: "grid four" },
+            [["Views", n(r.views)], ["Reach", n(r.reach)], ["Saves", `${n(r.saved)} · ${pct(r.save_rate)}`], ["Shares", `${n(r.shares)} · ${pct(r.share_rate)}`]]
+              .map(([k, v]) => h("div", { class: "stat" }, h("div", { class: "k" }, k), h("div", { class: "v small" }, v))))
+        : h("p", { class: "meta" }, "No numbers yet. Instagram needs a little time after posting.")))
+      : h("div", { class: "card empty" }, "Nothing published yet."),
+    h("p", { class: "meta" }, a.last_synced_at ? `Last fetched ${when(a.last_synced_at)}.` : "Not fetched yet."),
+    h("button", { class: "secondary", onclick: (e) => refresh(e.currentTarget) }, "Refresh numbers now"));
+}
+
 function viewComingSoon(title, text) { return page(title, null, h("div", { class: "card" }, h("p", {}, text))); }
 
 // ---------- router ----------
 const routes = {
   home: viewHome, studio: viewStudio, approvals: viewApprovals, posts: viewPosts, more: viewMore,
   money: viewMoney, settings: viewSettings, audit: viewAudit,
-  trends: () => viewComingSoon("Trend Lab", "Daily ranked content ideas arrive in Phase 7, using permitted sources only."),
-  analytics: () => viewComingSoon("Analytics", "Reach, views, saves and shares appear once your Instagram account is connected (Phase 6) and synced (Phase 7). No numbers are shown until they are real."),
+  trends: () => viewComingSoon("Trend Lab", "Ranked content ideas, researched from permitted sources and your own results, arrive in Phase 8."),
+  analytics: viewAnalytics,
 };
 const TAB_OF = { money: "more", settings: "more", audit: "more", trends: "more", analytics: "more", post: "posts" };
 

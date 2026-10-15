@@ -47,9 +47,9 @@ def sign_media(key: str, media_id: str, expires: int) -> str:
     return hmac.new(hashlib.sha256(key.encode()).digest(), msg, hashlib.sha256).hexdigest()
 
 
-def media_link(base_url: str, key: str, media_id: str, now: float | None = None) -> str:
+def media_link(base_url: str, key: str, media_id: str, now: float | None = None, ext: str = "jpg") -> str:
     exp = int((now or time.time()) + MEDIA_LINK_TTL)
-    return f"{base_url.rstrip('/')}/public/media/{media_id}.jpg?exp={exp}&sig={sign_media(key, media_id, exp)}"
+    return f"{base_url.rstrip('/')}/public/media/{media_id}.{ext}?exp={exp}&sig={sign_media(key, media_id, exp)}"
 
 
 def verify_media(key: str, media_id: str, exp: int, sig: str, now: float | None = None) -> bool:
@@ -127,12 +127,19 @@ class InstagramPublisher:
         token = decrypt(self.key, self.acct.token_enc)
         ids = [u.split(":", 1)[1] for u in (post.media_urls or []) if u.startswith("media:")]
         if not ids:
-            raise PermanentPublishError("post has no rendered images")
-        if not all(self.db.get(Media, i) for i in ids):
-            raise PermanentPublishError("an image for this post is missing; re-render it")
-        urls = [media_link(self.base_url, self.key, i) for i in ids]
+            raise PermanentPublishError("post has no rendered images or video")
+        items = [self.db.get(Media, i) for i in ids]
+        if not all(items):
+            raise PermanentPublishError("an image or video for this post is missing; add it again")
+        urls = [media_link(self.base_url, self.key, m.id, ext="mp4" if m.mime == "video/mp4" else "jpg") for m in items]
         alt = (post.content or {}).get("alt_text")
         try:
+            if post.media_type.value == "REELS":
+                if items[0].mime != "video/mp4":
+                    raise PermanentPublishError("a Reel needs an MP4 video")
+                cover = self.db.scalar(select(Media).where(Media.post_id == post.id, Media.kind == "cover"))
+                cover_url = media_link(self.base_url, self.key, cover.id) if cover else None
+                return self.client.publish_reel(self.acct.ig_user_id, token, urls[0], post.caption, cover_url)
             if post.media_type.value == "CAROUSEL":
                 return self.client.publish_carousel(self.acct.ig_user_id, token, urls, post.caption)
             if post.media_type.value == "IMAGE":
@@ -140,3 +147,36 @@ class InstagramPublisher:
             raise PermanentPublishError(f"{post.media_type.value} publishing is not supported yet")
         except InstagramError as e:
             raise (TransientPublishError if e.transient else PermanentPublishError)(str(e)) from e
+
+
+# ---- results -----------------------------------------------------------------------------
+def sync_metrics(db: Session, client: InstagramClient, key: str, now=None) -> dict:
+    """Pulls lifetime numbers for every published post plus the follower count.
+    Stores a new snapshot each run; nothing is estimated or invented."""
+    from ..models import AccountSnapshot, Post, PostMetric, PostStatus
+    acct = current_account(db)
+    if not acct or not acct.token_enc:
+        raise NotConfigured("Instagram is not connected")
+    token = decrypt(key, acct.token_enc)
+    done, errors = 0, []
+    posts = db.scalars(select(Post).where(Post.status == PostStatus.published, Post.ig_media_id.is_not(None))).all()
+    for p in posts:
+        if p.ig_media_id.startswith("dryrun-"):
+            continue
+        try:
+            v = client.media_insights(p.ig_media_id, token, reel=p.media_type.value == "REELS")
+        except InstagramError as e:
+            errors.append(f"{p.id[:8]}: {e}")
+            continue
+        db.add(PostMetric(post_id=p.id, views=v.get("views"), reach=v.get("reach"), likes=v.get("likes"),
+                          comments=v.get("comments"), saved=v.get("saved"), shares=v.get("shares"),
+                          total_interactions=v.get("total_interactions"), avg_watch_ms=v.get("ig_reels_avg_watch_time")))
+        done += 1
+    try:
+        info = client.account_info(token)
+        db.add(AccountSnapshot(followers=info.get("followers_count"), media_count=info.get("media_count")))
+    except InstagramError as e:
+        errors.append(f"account: {e}")
+    db.flush()
+    audit.record(db, "system:agent", "metrics_synced", None, posts=done, errors=len(errors))
+    return {"posts": done, "errors": errors}

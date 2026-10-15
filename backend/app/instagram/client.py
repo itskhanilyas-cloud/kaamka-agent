@@ -133,6 +133,54 @@ class InstagramClient:
         self._wait_ready(parent, token)
         return self._post(f"{ig_user_id}/media_publish", token, {"creation_id": parent})["id"]
 
+    def publish_reel(self, ig_user_id: str, token: str, video_url: str, caption: str,
+                     cover_url: str | None = None) -> str:
+        data = {"media_type": "REELS", "video_url": video_url, "caption": caption, "share_to_feed": "true"}
+        if cover_url:
+            data["cover_url"] = cover_url
+        c = self._post(f"{ig_user_id}/media", token, data)["id"]
+        self._wait_ready(c, token, attempts=60, delay=5.0)  # video processing takes longer
+        return self._post(f"{ig_user_id}/media_publish", token, {"creation_id": c})["id"]
+
+    # ---- Insights --------------------------------------------------------------------------
+    MEDIA_METRICS = ["views", "reach", "likes", "comments", "saved", "shares", "total_interactions"]
+    REEL_METRICS = MEDIA_METRICS + ["ig_reels_avg_watch_time"]
+
+    @staticmethod
+    def _values(payload: dict) -> dict:
+        out = {}
+        for item in payload.get("data", []):
+            v = item.get("total_value", {}).get("value") if "total_value" in item else None
+            if v is None and item.get("values"):
+                v = item["values"][0].get("value")
+            if isinstance(v, (int, float)):
+                out[item.get("name")] = int(v)
+        return out
+
+    def media_insights(self, media_id: str, token: str, reel: bool = False) -> dict:
+        """Lifetime numbers for one post. Metrics Instagram doesn't support for this media are skipped."""
+        metrics = self.REEL_METRICS if reel else self.MEDIA_METRICS
+        url = f"{GRAPH}/{API_VERSION}/{media_id}/insights"
+        r = self.http.get(url, params={"metric": ",".join(metrics), "access_token": token})
+        if r.status_code == 200:
+            return self._values(r.json())
+        err = _safe_error(r, "insights")
+        if err.transient:
+            raise err
+        out = {}  # one unsupported metric fails the whole call, so ask one by one
+        for m in metrics:
+            r = self.http.get(url, params={"metric": m, "access_token": token})
+            if r.status_code == 200:
+                out.update(self._values(r.json()))
+        return out
+
+    def account_info(self, token: str) -> dict:
+        r = self.http.get(f"{GRAPH}/{API_VERSION}/me", params={
+            "fields": "username,followers_count,media_count", "access_token": token})
+        if r.status_code != 200:
+            raise _safe_error(r, "account")
+        return r.json()
+
     def publishing_limit(self, ig_user_id: str, token: str) -> dict:
         r = self.http.get(f"{GRAPH}/{API_VERSION}/{ig_user_id}/content_publishing_limit",
                           params={"fields": "quota_usage,config", "access_token": token})
