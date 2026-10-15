@@ -44,8 +44,8 @@ class MockTextProvider:
         for i in range(n):
             v = {
                 "hook": f"[MOCK {i + 1}] Stop wasting hours on {topic[:40]}",
-                "caption": (f"[MOCK DRAFT — not AI output] {topic}.\n\nWe tested it on screen so you don't have to. "
-                            "Try it today and tell us what worked.\n\nSave this for later."),
+                "caption": (f"[MOCK DRAFT — not AI output] {topic}.\n\nTry it on one task today and tell us what worked. "
+                            "(Placeholder text: no test result is claimed.)\n\nSave this for later."),
                 "cta": "Save this for later",
                 "hashtags": ["#AITools", "#StudyTips", "#Productivity", "#KaamKaAI"],
                 "alt_text": f"Slide about {topic[:60]}",

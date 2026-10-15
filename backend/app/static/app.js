@@ -1,0 +1,359 @@
+// Kaam Ka AI dashboard. No framework, no build step.
+// All data is rendered with textContent (never innerHTML), because AI output is untrusted.
+
+const $view = document.getElementById("view");
+const state = { overview: null };
+
+// ---------- helpers ----------
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v == null) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "dataset") Object.assign(el.dataset, v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch("/api" + path, {
+    method: opts.method || "GET",
+    headers: opts.body ? { "Content-Type": "application/json" } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    credentials: "same-origin",
+  });
+  if (res.status === 401) { location.href = "/.auth/login/aad?post_login_redirect_uri=/"; throw new Error("Please sign in"); }
+  const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+  if (!res.ok) throw new Error((data && (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail))) || res.statusText);
+  return data;
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "");
+const STATUS_LABEL = { draft: "Draft", pending_approval: "Waiting for you", approved: "Approved", scheduled: "Scheduled",
+  published: "Published", rejected: "Rejected", failed: "Failed" };
+const FORMAT_LABEL = { IMAGE: "Image", CAROUSEL: "Carousel", REELS: "Reel", STORIES: "Story" };
+const PILLARS = [["tool_test", "Tool test"], ["workflow", "Workflow"], ["prompts", "Prompts"], ["news", "AI news"], ["career", "Career"]];
+
+function errorBox(e) { return h("div", { class: "error", role: "alert" }, e.message || String(e)); }
+function page(title, sub, ...body) { return [h("h1", {}, title), sub ? h("p", { class: "sub" }, sub) : null, ...body]; }
+function statusTag(p) {
+  const cls = p.status === "published" || p.status === "approved" || p.status === "scheduled" ? "tag ok"
+    : p.status === "rejected" || p.status === "failed" ? "tag bad" : "tag";
+  return h("span", { class: cls }, STATUS_LABEL[p.status] || p.status);
+}
+function mockTag(isMock) { return isMock ? h("span", { class: "tag mock", title: "Practice output, not from the AI model" }, "MOCK") : null; }
+
+function segmented(options, value, onChange) {
+  const wrap = h("div", { class: "seg", role: "group" });
+  const render = (v) => {
+    wrap.replaceChildren(...options.map(([val, label]) =>
+      h("button", { type: "button", "aria-pressed": String(val === v), onclick: () => { render(val); onChange(val); } }, label)));
+  };
+  render(value);
+  return wrap;
+}
+
+// ---------- content preview (used by Studio, Approvals, Post detail) ----------
+function contentPreview(content, mediaType, caption) {
+  const c = content || {};
+  const parts = [];
+  if (c.hook) parts.push(h("p", { class: "hook" }, c.hook));
+  if (mediaType === "CAROUSEL" && Array.isArray(c.slides)) {
+    parts.push(h("div", { class: "slides", "aria-label": "Carousel slides" },
+      c.slides.map((s, i) => h("div", { class: "slide" }, h("b", {}, s.title || ""), h("span", {}, s.body || ""), h("small", {}, `${i + 1} / ${c.slides.length}`)))));
+  }
+  if (mediaType === "REELS" && Array.isArray(c.script)) {
+    parts.push(h("div", {}, c.script.map((s) =>
+      h("div", { class: "scene" }, h("b", {}, `${s.seconds || ""}s · `), s.visual || "",
+        s.voiceover ? h("div", {}, "🎙 ", s.voiceover) : null, s.on_screen_text ? h("div", { class: "meta" }, "Text: ", s.on_screen_text) : null))));
+  }
+  parts.push(h("div", { class: "preview" }, caption ?? c.caption ?? ""));
+  return parts;
+}
+
+function qualityBlock(q) {
+  if (!q) return null;
+  const failed = q.checks.filter((c) => !c.passed);
+  return h("div", {},
+    h("p", {}, h("span", { class: "score" }, `Quality ${q.score}/100`), " ",
+      q.blocked ? h("span", { class: "tag bad" }, "Needs edits") : h("span", { class: "tag ok" }, "Passes checks")),
+    failed.length ? h("ul", { class: "checks" }, failed.map((c) => h("li", { class: "x" }, `✗ ${c.reason}${c.blocking ? " (must fix)" : ""}`))) : null);
+}
+
+// ---------- views ----------
+async function viewHome() {
+  const o = await api("/overview");
+  state.overview = o;
+  const s = o.posts_by_status;
+  const pct = Math.min(100, (o.spent_this_month_inr / o.monthly_budget_inr) * 100);
+  return page("Overview", "Your content pipeline at a glance.",
+    o.pending_approvals ? h("a", { href: "#/approvals", class: "card", style: "display:block;text-decoration:none;color:inherit;border-color:var(--saffron)" },
+      h("b", {}, `${o.pending_approvals} post${o.pending_approvals > 1 ? "s" : ""} waiting for your approval →`)) : null,
+    h("div", { class: "grid four" },
+      [["Drafts", s.draft], ["Waiting", s.pending_approval], ["Scheduled", s.approved + s.scheduled], ["Published", s.published]]
+        .map(([k, v]) => h("div", { class: "stat" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v)))),
+    h("div", { class: "card" },
+      h("h2", {}, "Spending this month"),
+      h("p", {}, h("b", {}, inr(o.spent_this_month_inr)), ` of ${inr(o.monthly_budget_inr)} cap`),
+      h("div", { class: `meter ${pct > 80 ? "hot" : ""}`, role: "progressbar", "aria-valuenow": Math.round(pct), "aria-valuemin": 0, "aria-valuemax": 100 },
+        h("i", { style: `width:${pct}%` })),
+      h("p", { class: "meta", style: "margin-top:8px" }, "AI calls are refused before they would exceed the cap.")),
+    h("div", { class: "card" },
+      h("h2", {}, "Status"),
+      h("ul", { class: "list" },
+        h("li", {}, "Instagram: ", h("b", {}, o.instagram_connected ? "Connected" : "Not connected yet"), h("div", { class: "meta" }, o.data_note)),
+        h("li", {}, "AI writer: ", h("b", {}, o.text_provider === "mock" ? "Practice mode (mock)" : "Azure OpenAI")),
+        h("li", {}, "Auto-publish: ", h("b", {}, o.auto_publish.enabled ? "On" : "Off"), h("div", { class: "meta" }, "Every post needs your approval while this is off.")))),
+    h("a", { href: "#/studio" }, h("button", { class: "full" }, "✦ Create new content")));
+}
+
+async function viewStudio() {
+  const form = { idea: "", media_type: "CAROUSEL", pillar: "workflow", variants: 3, has_affiliate_link: false, test_notes: "" };
+  const results = h("div", { "aria-live": "polite" });
+  const btn = h("button", { class: "full", type: "submit" }, "Generate drafts");
+
+  const submit = async (ev) => {
+    ev.preventDefault();
+    btn.disabled = true; btn.replaceChildren(h("span", { class: "spinner" }), "Writing…");
+    results.replaceChildren();
+    try {
+      const r = await api("/studio/generate", { method: "POST", body: form });
+      results.replaceChildren(
+        h("h2", { style: "margin-top:20px" }, `${r.drafts.length} drafts, best first`),
+        r.provider === "mock" ? h("div", { class: "note" }, "Practice mode: these are placeholders, not real AI writing. Real drafts start once the app runs in Azure.") : null,
+        ...r.drafts.map((d, i) => h("article", { class: "card" },
+          h("div", { class: "row" }, h("span", { class: "tag" }, `Option ${i + 1}`), mockTag(d.is_mock)),
+          contentPreview(d.variant, form.media_type, null),
+          qualityBlock(d.quality),
+          h("a", { href: `#/post/${d.post_id}` }, h("button", { class: "secondary full", style: "margin-top:8px" }, "Open draft to edit & submit")))));
+      results.querySelector("h2")?.scrollIntoView({ behavior: "smooth" });
+    } catch (e) { results.replaceChildren(errorBox(e)); }
+    btn.disabled = false; btn.replaceChildren("Generate drafts");
+  };
+
+  return page("Content Studio", "Describe an idea; get scored drafts in the Kaam Ka AI voice. Nothing is posted.",
+    h("form", { class: "card", onsubmit: submit },
+      h("label", { for: "idea" }, "Idea"),
+      h("textarea", { id: "idea", required: true, minlength: 5, maxlength: 500, placeholder: "e.g. 3 free AI tools that turn lecture recordings into notes",
+        oninput: (e) => (form.idea = e.target.value) }),
+      h("label", {}, "Format"),
+      segmented([["IMAGE", "Image"], ["CAROUSEL", "Carousel"], ["REELS", "Reel"]], form.media_type, (v) => (form.media_type = v)),
+      h("label", { for: "pillar" }, "Content pillar"),
+      h("select", { id: "pillar", onchange: (e) => (form.pillar = e.target.value) },
+        PILLARS.map(([v, l]) => h("option", { value: v, selected: v === form.pillar }, l))),
+      h("label", {}, "How many options"),
+      segmented([[1, "1"], [2, "2"], [3, "3"], [4, "4"]], form.variants, (v) => (form.variants = v)),
+      h("label", { for: "notes" }, "Your test notes (optional)"),
+      h("textarea", { id: "notes", style: "min-height:80px", placeholder: "What actually happened when you tried it. Leave empty and the AI won't claim any results.",
+        oninput: (e) => (form.test_notes = e.target.value) }),
+      h("label", { class: "check" }, h("input", { type: "checkbox", onchange: (e) => (form.has_affiliate_link = e.target.checked) }), "This post has an affiliate link"),
+      h("div", { style: "margin-top:16px" }, btn)),
+    results);
+}
+
+async function viewApprovals() {
+  const items = await api("/approvals?status=pending");
+  const list = h("div");
+  const render = (rows) => {
+    list.replaceChildren(...(rows.length ? rows.map((r) => {
+      const p = r.post;
+      const actions = h("div", { class: "row", style: "margin-top:10px" },
+        h("button", { class: "good", onclick: () => decide(r.id, true) }, "Approve"),
+        h("button", { class: "bad", onclick: () => decide(r.id, false) }, "Reject"),
+        p ? h("a", { href: `#/post/${p.id}` }, h("button", { class: "secondary" }, "Edit")) : null);
+      return h("article", { class: "card" },
+        h("div", { class: "row" }, h("span", { class: "tag" }, r.kind.replace("_", " ")), p ? h("span", { class: "tag" }, FORMAT_LABEL[p.media_type]) : null, p ? mockTag(p.is_mock) : null),
+        p ? contentPreview(p.content, p.media_type, p.caption) : h("pre", { class: "preview" }, JSON.stringify(r.payload, null, 2)),
+        p?.scheduled_at ? h("p", { class: "meta" }, "Goes out: ", when(p.scheduled_at)) : p ? h("p", { class: "meta" }, "Goes out as soon as approved (publishing is a dry run until Instagram is connected).") : null,
+        h("p", { class: "meta" }, `Requested by ${r.requested_by} · ${when(r.created_at)}`),
+        actions);
+    }) : [h("div", { class: "card empty" }, "Nothing waiting for you. ", h("a", { href: "#/studio" }, "Create content"))]));
+  };
+  const decide = async (id, approve) => {
+    let note = null;
+    if (!approve) { note = prompt("Why reject? (optional, helps future drafts)") ; if (note === null) return; }
+    else if (!confirm("Approve this post for publishing?")) return;
+    try {
+      await api(`/approvals/${id}/decision`, { method: "POST", body: { approve, note } });
+      toast(approve ? "Approved" : "Rejected");
+      render(await api("/approvals?status=pending")); refreshBadge();
+    } catch (e) { toast(e.message); }
+  };
+  render(items);
+  return page("Approval Center", "Nothing is published, sent or spent without your OK here.", list);
+}
+
+async function viewPosts(params) {
+  const filters = [["draft", "Drafts"], ["pending_approval", "Waiting"], ["scheduled", "Scheduled"], ["approved", "Approved"], ["published", "Published"], ["rejected", "Rejected"], ["failed", "Failed"]];
+  const current = params.get("status") || "draft";
+  const posts = await api(`/posts?status=${current}`);
+  return page("Posts", "Every draft and post, by status.",
+    h("div", { class: "slides", style: "gap:6px;margin-bottom:12px" },
+      filters.map(([v, l]) => h("a", { href: `#/posts?status=${v}` }, h("button", { class: v === current ? "" : "secondary", style: "white-space:nowrap" }, l)))),
+    h("div", { class: "card" }, posts.length ? h("ul", { class: "list" }, posts.map((p) =>
+      h("li", {}, h("a", { href: `#/post/${p.id}`, style: "text-decoration:none;color:inherit;display:block" },
+        h("div", { class: "row" }, statusTag(p), h("span", { class: "tag" }, FORMAT_LABEL[p.media_type]), mockTag(p.is_mock),
+          p.quality ? h("span", { class: "meta" }, `Quality ${p.quality.score}`) : null),
+        h("p", { style: "margin:6px 0 0;font-weight:600" }, (p.content?.hook || p.caption || "(no caption)").slice(0, 90)),
+        h("p", { class: "meta" }, p.scheduled_at ? `Scheduled ${when(p.scheduled_at)}` : p.published_at ? `Published ${when(p.published_at)}` : "")))))
+      : h("p", { class: "empty" }, "No posts here.")));
+}
+
+async function viewPost(id) {
+  const all = await api("/posts");
+  const p = all.find((x) => x.id === id);
+  if (!p) return page("Post not found", null);
+  const editable = !["published", "pending_approval"].includes(p.status);
+  const edits = { caption: p.caption, scheduled_at: p.scheduled_at, has_affiliate_link: p.has_affiliate_link };
+  const toLocal = (s) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
+
+  const save = async () => {
+    try { await api(`/posts/${id}`, { method: "PATCH", body: edits }); toast("Saved"); route(); } catch (e) { toast(e.message); }
+  };
+  const submit = async () => {
+    try { await api(`/posts/${id}`, { method: "PATCH", body: edits }); await api(`/posts/${id}/submit`, { method: "POST" });
+      toast("Sent to Approval Center"); refreshBadge(); location.hash = "#/approvals"; }
+    catch (e) { toast(e.message); }
+  };
+
+  return page(FORMAT_LABEL[p.media_type] + " post", null,
+    h("div", { class: "row", style: "margin-bottom:10px" }, statusTag(p), mockTag(p.is_mock), p.generated_by && !p.is_mock ? h("span", { class: "meta" }, `Written by ${p.generated_by}`) : null),
+    h("div", { class: "card" }, contentPreview(p.content, p.media_type, p.caption), qualityBlock(p.quality)),
+    editable ? h("div", { class: "card" },
+      h("h2", {}, "Edit"),
+      h("label", { for: "cap" }, "Caption (with hashtags)"),
+      h("textarea", { id: "cap", style: "min-height:200px", oninput: (e) => (edits.caption = e.target.value) }, p.caption),
+      h("label", { for: "when" }, "Publish time (optional)"),
+      h("input", { id: "when", type: "datetime-local", value: toLocal(p.scheduled_at),
+        onchange: (e) => (edits.scheduled_at = e.target.value ? new Date(e.target.value).toISOString() : null) }),
+      h("label", { class: "check" }, h("input", { type: "checkbox", checked: p.has_affiliate_link, onchange: (e) => (edits.has_affiliate_link = e.target.checked) }), "Has an affiliate link"),
+      p.checks.length ? h("div", { class: "note", style: "margin-top:12px" }, h("b", {}, "Before it can be submitted:"),
+        h("ul", { class: "checks" }, p.checks.map((c) => h("li", {}, "• " + c)))) : null,
+      h("div", { class: "row", style: "margin-top:12px" },
+        h("button", { class: "secondary", onclick: save }, "Save"),
+        h("button", { onclick: submit, disabled: p.is_mock }, "Submit for approval")),
+      p.is_mock ? h("p", { class: "meta", style: "margin-top:8px" }, "Practice drafts can't be submitted.") : null)
+    : h("p", { class: "meta" }, p.status === "pending_approval" ? "Waiting in the Approval Center." : ""),
+    p.last_error ? errorBox(new Error("Last error: " + p.last_error)) : null);
+}
+
+function viewMore() {
+  return page("More", null, h("nav", { class: "card menu" },
+    [["#/money", "Money", "Revenue, costs, profit"], ["#/settings", "Settings", "Auto-publish, budget, accounts"],
+      ["#/audit", "Audit log", "Every important action"], ["#/trends", "Trend Lab", "Coming in Phase 7"], ["#/analytics", "Analytics", "After Instagram connects"]]
+      .map(([href, l, d]) => h("a", { href }, l, h("span", {}, d)))));
+}
+
+async function viewMoney() {
+  const s = await api("/revenue/summary");
+  const form = { source: "affiliate", amount_inr: "", confirmed: false, evidence: "" };
+  const add = async (ev) => {
+    ev.preventDefault();
+    try { await api("/revenue", { method: "POST", body: { ...form, amount_inr: Number(form.amount_inr) } }); toast("Recorded"); route(); }
+    catch (e) { toast(e.message); }
+  };
+  return page("Money", "Confirmed money needs proof. Estimates are kept separate and never counted as earned.",
+    h("div", { class: "grid" },
+      h("div", { class: "stat" }, h("div", { class: "k" }, "Confirmed revenue"), h("div", { class: "v" }, inr(s.revenue_confirmed_inr))),
+      h("div", { class: "stat" }, h("div", { class: "k" }, "Costs"), h("div", { class: "v" }, inr(s.costs_inr))),
+      h("div", { class: "stat" }, h("div", { class: "k" }, "Confirmed profit"), h("div", { class: "v" }, inr(s.profit_confirmed_inr))),
+      h("div", { class: "stat" }, h("div", { class: "k" }, "Estimated (not yet paid)"), h("div", { class: "v" }, inr(s.revenue_estimated_inr)))),
+    Object.keys(s.by_source).length ? h("div", { class: "card" }, h("h2", {}, "By source"), h("ul", { class: "list" },
+      Object.entries(s.by_source).map(([k, v]) => h("li", { class: "row", style: "justify-content:space-between" }, h("span", {}, k.replace("_", " ")),
+        h("span", {}, inr(v.confirmed), v.estimated ? h("span", { class: "meta" }, ` + ${inr(v.estimated)} est.`) : null))))) : null,
+    h("form", { class: "card", onsubmit: add },
+      h("h2", {}, "Record income"),
+      h("label", { for: "src" }, "Source"),
+      h("select", { id: "src", onchange: (e) => (form.source = e.target.value) },
+        [["affiliate", "Affiliate"], ["sponsorship", "Sponsorship"], ["digital_product", "Digital product"], ["referral", "Referral"], ["ads", "Ads"], ["other", "Other"]]
+          .map(([v, l]) => h("option", { value: v }, l))),
+      h("label", { for: "amt" }, "Amount (₹)"),
+      h("input", { id: "amt", type: "number", min: "0", step: "0.01", required: true, inputmode: "decimal", oninput: (e) => (form.amount_inr = e.target.value) }),
+      h("label", { class: "check" }, h("input", { type: "checkbox", onchange: (e) => (form.confirmed = e.target.checked) }), "Money received (confirmed)"),
+      h("label", { for: "ev" }, "Proof (payout ID, statement or invoice)"),
+      h("input", { id: "ev", type: "text", placeholder: "Required if confirmed", oninput: (e) => (form.evidence = e.target.value) }),
+      h("div", { style: "margin-top:16px" }, h("button", { class: "full", type: "submit" }, "Record"))));
+}
+
+async function viewSettings() {
+  const [o, pol] = await Promise.all([api("/overview"), api("/policies/auto_publish")]);
+  const toggle = async () => {
+    const next = !pol.enabled;
+    if (next && !confirm("Turn on auto-publish? Approved post types could then publish without a per-post click. You can turn it off any time.")) return;
+    try { await api("/policies/auto_publish", { method: "PUT", body: { value: { ...pol, enabled: next } } }); toast(next ? "Auto-publish on" : "Auto-publish off"); route(); }
+    catch (e) { toast(e.message); }
+  };
+  return page("Settings", "Only you can change these. The agent can read them but never change them.",
+    h("div", { class: "card" }, h("h2", {}, "Auto-publish"),
+      h("p", {}, pol.enabled ? "On." : "Off: every post needs your approval."),
+      h("p", { class: "meta" }, "Not active until Instagram is connected; in development nothing is ever posted."),
+      h("button", { class: pol.enabled ? "bad" : "secondary", onclick: toggle }, pol.enabled ? "Turn off" : "Turn on")),
+    h("div", { class: "card" }, h("h2", {}, "Budget"),
+      h("p", {}, `Monthly cap ${inr(o.monthly_budget_inr)} · spent ${inr(o.spent_this_month_inr)}`),
+      h("p", { class: "meta" }, "Change the cap with KA_MONTHLY_BUDGET_INR in Azure settings.")),
+    h("div", { class: "card" }, h("h2", {}, "Connected accounts"),
+      h("ul", { class: "list" },
+        h("li", {}, "Instagram: ", h("b", {}, "not connected"), h("div", { class: "meta" }, "Linking happens in Phase 6 and needs your approval in Meta's own screen.")),
+        h("li", {}, "AI writer: ", h("b", {}, o.text_provider === "mock" ? "practice mode" : "Azure OpenAI (text-main)")))));
+}
+
+async function viewAudit() {
+  const rows = await api("/audit?limit=100");
+  return page("Audit log", "Every approval, change, block and error. Secrets are hidden automatically.",
+    h("div", { class: "card" }, rows.length ? h("ul", { class: "list" }, rows.map((r) =>
+      h("li", {}, h("b", {}, r.event.replaceAll("_", " ")), h("div", { class: "meta" }, `${when(r.at)} · ${r.actor}${r.target ? " · " + r.target.slice(0, 8) : ""}`))))
+      : h("p", { class: "empty" }, "No events yet.")));
+}
+
+function viewComingSoon(title, text) { return page(title, null, h("div", { class: "card" }, h("p", {}, text))); }
+
+// ---------- router ----------
+const routes = {
+  home: viewHome, studio: viewStudio, approvals: viewApprovals, posts: viewPosts, more: viewMore,
+  money: viewMoney, settings: viewSettings, audit: viewAudit,
+  trends: () => viewComingSoon("Trend Lab", "Daily ranked content ideas arrive in Phase 7, using permitted sources only."),
+  analytics: () => viewComingSoon("Analytics", "Reach, views, saves and shares appear once your Instagram account is connected (Phase 6) and synced (Phase 7). No numbers are shown until they are real."),
+};
+const TAB_OF = { money: "more", settings: "more", audit: "more", trends: "more", analytics: "more", post: "posts" };
+
+async function route() {
+  const [path, query] = (location.hash.slice(2) || "home").split("?");
+  const [name, arg] = path.split("/");
+  const params = new URLSearchParams(query || "");
+  document.querySelectorAll(".nav a").forEach((a) => a.toggleAttribute("aria-current", false));
+  const tab = document.querySelector(`.nav a[data-tab="${TAB_OF[name] || name}"]`);
+  if (tab) tab.setAttribute("aria-current", "page");
+  $view.replaceChildren(h("p", { class: "meta" }, h("span", { class: "spinner" }), "Loading…"));
+  try {
+    const out = name === "post" ? await viewPost(arg) : await (routes[name] || viewHome)(params);
+    $view.replaceChildren(...[out].flat(Infinity).filter((x) => x != null && x !== false));
+  } catch (e) { $view.replaceChildren(errorBox(e)); }
+  $view.focus({ preventScroll: true }); window.scrollTo(0, 0);
+}
+
+async function refreshBadge() {
+  try {
+    const o = await api("/overview");
+    const b = document.getElementById("badge");
+    b.hidden = !o.pending_approvals; b.textContent = o.pending_approvals;
+    const env = document.getElementById("env");
+    env.textContent = o.environment === "production" ? "Live" : "Test mode";
+    env.classList.toggle("prod", o.environment === "production");
+  } catch { /* shown by the view */ }
+}
+
+window.addEventListener("hashchange", route);
+route(); refreshBadge();

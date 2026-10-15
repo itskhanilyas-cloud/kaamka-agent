@@ -106,7 +106,7 @@ def overview(db: Session = Depends(get_db), settings: Settings = Depends(get_set
     pending = db.query(ActionRequest).filter(ActionRequest.status == ActionStatus.pending).count()
     return {"environment": settings.app_env, "posts_by_status": counts, "pending_approvals": pending,
             "spent_this_month_inr": budget.spent_this_month(db), "monthly_budget_inr": settings.monthly_budget_inr,
-            "auto_publish": policy.get_policy(db, "auto_publish"),
+            "auto_publish": policy.get_policy(db, "auto_publish"), "text_provider": settings.text_provider,
             "instagram_connected": False, "data_note": "Instagram metrics appear after Phase 6 connects your account."}
 
 

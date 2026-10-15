@@ -1,19 +1,55 @@
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api import router
 from .config import get_settings
 from .db import init_engine
 
+STATIC = Path(__file__).parent / "static"
+
+SECURITY_HEADERS = {
+    # Only our own scripts and styles; no inline script, no third-party code, no framing.
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; "
+                               "base-uri 'self'; form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
 
 def create_app() -> FastAPI:
     settings = get_settings()
     init_engine(settings.database_url)
-    app = FastAPI(title="Kaam Ka AI — Instagram Business Agent", version="0.1.0",
-                  docs_url="/api/docs" if settings.app_env != "production" else None)
+    app = FastAPI(title="Kaam Ka AI — Instagram Business Agent", version="0.2.0",
+                  docs_url="/api/docs" if settings.app_env != "production" else None, redoc_url=None)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for k, v in SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        if request.url.path.startswith("/api"):
+            response.headers["Cache-Control"] = "no-store"
+        if settings.app_env == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     app.include_router(router)
 
     @app.get("/healthz")
     def healthz():
         return {"ok": True}
+
+    # The dashboard shell holds no data; every number comes from /api, which requires the owner.
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def dashboard():
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app

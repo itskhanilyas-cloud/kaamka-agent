@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3D3BF3">
+  <title>Kaam Ka AI · Studio</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true">K</span><span>Kaam Ka AI</span></div>
+    <span id="env" class="pill"></span>
+  </header>
+  <div class="layout">
+    <nav class="nav" aria-label="Main">
+      <a href="#/home" data-tab="home"><span class="ico" aria-hidden="true">⌂</span><span>Home</span></a>
+      <a href="#/studio" data-tab="studio"><span class="ico" aria-hidden="true">✦</span><span>Studio</span></a>
+      <a href="#/approvals" data-tab="approvals"><span class="ico" aria-hidden="true">✓</span><span>Approve</span><b id="badge" class="badge" hidden></b></a>
+      <a href="#/posts" data-tab="posts"><span class="ico" aria-hidden="true">▤</span><span>Posts</span></a>
+      <a href="#/more" data-tab="more"><span class="ico" aria-hidden="true">≡</span><span>More</span></a>
+    </nav>
+    <main id="view" tabindex="-1"></main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
