@@ -39,8 +39,17 @@ class Settings(BaseSettings):
     # Secrets: never logged, never sent to the browser.
     # Only for local use; in Azure the app signs in with its managed identity instead.
     azure_openai_api_key: SecretStr | None = None
+    # Instagram (Phase 6). App ID is public; secret and encryption key come from Key Vault.
+    instagram_app_id: str | None = None
     instagram_app_secret: SecretStr | None = None
     token_encryption_key: SecretStr | None = None
+    # Public base URL of this app, used for the OAuth redirect and signed image links.
+    public_base_url: str | None = None
+
+    @property
+    def instagram_ready(self) -> bool:
+        return bool(self.instagram_app_id and self.instagram_app_secret and self.token_encryption_key
+                    and self.public_base_url)
 
     def validate_for_runtime(self) -> None:
         if self.app_env == "production" and self.dev_auth_bypass:

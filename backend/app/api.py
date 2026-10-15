@@ -127,7 +127,14 @@ def overview(db: Session = Depends(get_db), settings: Settings = Depends(get_set
     return {"environment": settings.app_env, "posts_by_status": counts, "pending_approvals": pending,
             "spent_this_month_inr": budget.spent_this_month(db), "monthly_budget_inr": settings.monthly_budget_inr,
             "auto_publish": policy.get_policy(db, "auto_publish"), "text_provider": settings.text_provider,
-            "instagram_connected": False, "data_note": "Instagram metrics appear after Phase 6 connects your account."}
+            "instagram_connected": _ig_connected(db), "instagram_configured": settings.instagram_ready,
+            "data_note": "Reach, views and saves appear once metrics syncing is built (Phase 7)."}
+
+
+def _ig_connected(db: Session) -> bool:
+    from .instagram.service import current_account
+    acct = current_account(db)
+    return bool(acct and acct.token_enc)
 
 
 @router.post("/posts", status_code=201)

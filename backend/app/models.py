@@ -93,6 +93,28 @@ class Media(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class InstagramAccount(Base):
+    """The connected Instagram professional account. The token is stored encrypted (Fernet)."""
+    __tablename__ = "instagram_accounts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ig_user_id: Mapped[str] = mapped_column(String(64))
+    username: Mapped[str] = mapped_column(String(64), default="")
+    account_type: Mapped[str | None] = mapped_column(String(32))
+    token_enc: Mapped[str] = mapped_column(Text, default="")
+    token_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    token_refreshed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OAuthState(Base):
+    """One-time CSRF state for the Instagram connect flow."""
+    __tablename__ = "oauth_states"
+    state: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ActionRequest(Base):
     __tablename__ = "action_requests"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)

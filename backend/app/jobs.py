@@ -13,12 +13,28 @@ def main(argv: list[str]) -> int:
     db = next(get_db())
     try:
         if job == "publish":
-            # Phase 6 passes the real Instagram publisher here; until then this is always a dry run.
-            result = publishing.run_due(db, publishing.get_publisher(settings), settings)
+            real = None
+            if settings.app_env == "production" and settings.instagram_ready:
+                from .instagram.routes import client_for
+                from .instagram.service import InstagramPublisher, NotConfigured
+                try:
+                    real = InstagramPublisher(db, client_for(settings), settings.token_encryption_key.get_secret_value(),
+                                              settings.public_base_url)
+                except NotConfigured:
+                    real = None
+            result = publishing.run_due(db, publishing.get_publisher(settings, real), settings)
             db.commit()
             print(f"publish job: {result}")
             return 0
-        print(f"unknown job '{job}'. Available: publish")
+        if job == "refresh-token":
+            if not settings.instagram_ready:
+                print("instagram not configured"); return 0
+            from .instagram.routes import client_for
+            from .instagram.service import refresh_if_due
+            print("token:", refresh_if_due(db, client_for(settings), settings.token_encryption_key.get_secret_value(), "system:agent"))
+            db.commit()
+            return 0
+        print(f"unknown job '{job}'. Available: publish, refresh-token")
         return 2
     finally:
         db.close()

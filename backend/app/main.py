@@ -44,6 +44,8 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(router)
+    from .instagram.routes import router as ig_router
+    app.include_router(ig_router)
 
     @app.get("/healthz")
     def healthz():
