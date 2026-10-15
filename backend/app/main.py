@@ -1,3 +1,4 @@
+import os
 import hashlib
 from pathlib import Path
 
@@ -49,7 +50,7 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     def healthz():
-        return {"ok": True}
+        return {"ok": True, "version": os.environ.get("KA_BUILD_VERSION", "dev")}
 
     @app.get("/whoami", include_in_schema=False)
     def whoami(user: str = Depends(current_user)):

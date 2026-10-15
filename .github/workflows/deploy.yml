@@ -47,9 +47,10 @@ jobs:
           TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
           IMAGE="$ACR_NAME.azurecr.io/kaamka:$TAG"
           az acr login --name "$ACR_NAME"
-          docker build -t "$IMAGE" .
+          docker build --build-arg GIT_SHA="$TAG" -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Roll out new revision
         run: |
@@ -64,10 +65,11 @@ jobs:
       - name: Health check
         run: |
           for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$FQDN/healthz" || true)
-            if [ "$code" = "200" ]; then echo "Healthy: https://$FQDN"; exit 0; fi
+            # Healthy only when the NEW version answers (Azure keeps serving the old revision if the new one crashes).
+            body=$(curl -s "https://$FQDN/healthz" || true)
+            if echo "$body" | grep -q "\"version\":\"$TAG\""; then echo "Healthy on $TAG: https://$FQDN"; exit 0; fi
             sleep 10
           done
           echo "::error::App did not become healthy at https://$FQDN"
-          az containerapp logs show -g "$RG" -n "$APP" --tail 50 --type console || true
+          az containerapp logs show -g "$RG" -n "$APP" --revision "$(az containerapp show -g "$RG" -n "$APP" --query properties.latestRevisionName -o tsv)" --tail 50 --format text || true
           exit 1

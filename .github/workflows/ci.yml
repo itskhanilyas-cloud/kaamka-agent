@@ -40,3 +40,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t kaamka-agent:ci .
+      # Catches libraries missing from requirements.txt (tests run with extra dev packages installed).
+      - name: Smoke-test the image imports
+        run: docker run --rm kaamka-agent:ci python -c "import app.main, app.jobs, app.instagram.routes, app.ai.providers, app.render.service"

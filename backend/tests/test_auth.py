@@ -4,7 +4,7 @@ from tests.conftest import as_owner, as_stranger
 
 
 def test_health_is_public(client):
-    assert client.get("/healthz").json() == {"ok": True}
+    assert client.get("/healthz").json()["ok"] is True
 
 
 def test_api_requires_sign_in(client):

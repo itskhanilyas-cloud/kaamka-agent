@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 
+ARG GIT_SHA=dev
+ENV KA_BUILD_VERSION=$GIT_SHA
+
 RUN useradd --uid 10001 --no-create-home appuser
 USER appuser
 
