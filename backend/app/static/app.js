@@ -200,7 +200,21 @@ async function viewApprovals() {
     } catch (e) { toast(e.message); }
   };
   render(items);
-  return page("Approval Center", "Nothing is published, sent or spent without your OK here.", list);
+  const approved = await api("/posts?status=approved");
+  const runNow = async (btn) => {
+    if (!confirm(`Publish ${approved.length} approved post${approved.length > 1 ? "s" : ""} to Instagram now? (Maximum 3 a day.)`)) return;
+    btn.disabled = true; btn.replaceChildren(h("span", { class: "spinner" }), "Publishing…");
+    try {
+      const r = await api("/publish/run", { method: "POST" });
+      toast(r.dry_run ? "Test mode: nothing was posted" : `Published ${r.published}${r.failed ? `, ${r.failed} failed` : ""}${r.deferred_daily_cap ? `, ${r.deferred_daily_cap} wait for tomorrow` : ""}`);
+      route();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.replaceChildren("Publish approved posts now"); }
+  };
+  const publishCard = approved.length ? h("div", { class: "card", style: "border-color:var(--green)" },
+    h("p", {}, h("b", {}, `${approved.length} approved post${approved.length > 1 ? "s" : ""} ready to go.`)),
+    h("p", { class: "meta" }, "Scheduled posts go out at their time once automatic posting is switched on; until then, publish from here."),
+    h("button", { class: "good", onclick: (e) => runNow(e.currentTarget) }, "Publish approved posts now")) : null;
+  return page("Approval Center", "Nothing is published, sent or spent without your OK here.", publishCard, list);
 }
 
 async function viewPosts(params) {
@@ -315,7 +329,24 @@ async function viewMoney() {
 }
 
 async function viewSettings() {
-  const [o, pol] = await Promise.all([api("/overview"), api("/policies/auto_publish")]);
+  const [o, pol, ig] = await Promise.all([api("/overview"), api("/policies/auto_publish"), api("/instagram/status")]);
+  const flag = new URLSearchParams(location.hash.split("?")[1] || "").get("ig");
+  const disconnect = async () => {
+    if (!confirm("Disconnect Instagram? Kaam Ka AI will stop being able to post until you connect again.")) return;
+    try { await api("/instagram/disconnect", { method: "POST" }); toast("Instagram disconnected"); route(); } catch (e) { toast(e.message); }
+  };
+  const igCard = h("div", { class: "card" }, h("h2", {}, "Instagram"),
+    flag === "connected" ? h("div", { class: "note" }, "Connected. Kaam Ka AI can now publish posts you approve.") : null,
+    flag === "declined" ? h("div", { class: "error" }, "Connection cancelled on Instagram. Nothing was changed.") : null,
+    ig.connected
+      ? [h("p", {}, "Connected as ", h("b", {}, "@" + ig.username), ig.account_type ? h("span", { class: "meta" }, ` (${ig.account_type.toLowerCase().replace("_", " ")})`) : null),
+         h("p", { class: "meta" }, "Access renews automatically. Current access valid until ", when(ig.token_expires_at), "."),
+         h("button", { class: "bad", onclick: disconnect }, "Disconnect")]
+      : ig.configured
+        ? [h("p", {}, "Not connected yet."),
+           h("p", { class: "meta" }, "You'll sign in on Instagram's own page and approve: profile info, publishing, comments and insights. Direct messages are not requested."),
+           h("a", { href: "/instagram/connect" }, h("button", {}, "Connect Instagram"))]
+        : h("p", { class: "meta" }, "Waiting for the Instagram app settings to be added in Azure."));
   const toggle = async () => {
     const next = !pol.enabled;
     if (next && !confirm("Turn on auto-publish? Approved post types could then publish without a per-post click. You can turn it off any time.")) return;
@@ -330,10 +361,9 @@ async function viewSettings() {
     h("div", { class: "card" }, h("h2", {}, "Budget"),
       h("p", {}, `Monthly cap ${inr(o.monthly_budget_inr)} · spent ${inr(o.spent_this_month_inr)}`),
       h("p", { class: "meta" }, "Change the cap with KA_MONTHLY_BUDGET_INR in Azure settings.")),
-    h("div", { class: "card" }, h("h2", {}, "Connected accounts"),
-      h("ul", { class: "list" },
-        h("li", {}, "Instagram: ", h("b", {}, "not connected"), h("div", { class: "meta" }, "Linking happens in Phase 6 and needs your approval in Meta's own screen.")),
-        h("li", {}, "AI writer: ", h("b", {}, o.text_provider === "mock" ? "practice mode" : "Azure OpenAI (text-main)")))));
+    igCard,
+    h("div", { class: "card" }, h("h2", {}, "AI writer"),
+      h("p", {}, h("b", {}, o.text_provider === "mock" ? "Practice mode" : "Azure OpenAI (text-main)"))));
 }
 
 async function viewAudit() {

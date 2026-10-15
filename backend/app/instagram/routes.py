@@ -68,6 +68,24 @@ def callback(code: str | None = None, state: str | None = None, error: str | Non
     return RedirectResponse("/#/settings?ig=connected", status_code=302)
 
 
+@router.post("/api/publish/run")
+def publish_now(db: Session = Depends(get_db), user: str = Depends(require_owner), settings: Settings = Depends(get_settings)):
+    """Owner-triggered run of the publish worker: posts only approved, due posts (max per day applies)."""
+    from ..services import publishing
+    real = None
+    if settings.app_env == "production" and settings.instagram_ready:
+        try:
+            real = service.InstagramPublisher(db, client_for(settings), settings.token_encryption_key.get_secret_value(),
+                                              settings.public_base_url)
+        except service.NotConfigured:
+            raise HTTPException(409, "Connect Instagram first (Settings → Connect Instagram)")
+    audit.record(db, user, "publish_run_requested", None)
+    result = publishing.run_due(db, publishing.get_publisher(settings, real), settings)
+    db.commit()
+    return {"published": result.published, "failed": result.failed, "retry_later": result.retried,
+            "deferred_daily_cap": result.skipped_cap, "dry_run": real is None}
+
+
 @router.post("/api/instagram/disconnect")
 def disconnect(db: Session = Depends(get_db), user: str = Depends(require_owner)):
     service.disconnect(db, user)
