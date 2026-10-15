@@ -27,14 +27,18 @@ class InstagramError(Exception):
         self.transient, self.code = transient, code
 
 
-def _safe_error(resp: httpx.Response) -> InstagramError:
+def _safe_error(resp: httpx.Response, step: str = "") -> InstagramError:
     """Build an error without ever including tokens or secrets from the request."""
     try:
-        err = resp.json().get("error", {})
+        body = resp.json()
     except ValueError:
-        err = {}
+        body = {}
+    # Graph API errors look like {"error": {...}}; the OAuth endpoint answers flat {"error_type", "error_message"}.
+    err = body.get("error") if isinstance(body.get("error"), dict) else body
     code = err.get("code")
-    msg = err.get("error_user_msg") or err.get("message") or f"HTTP {resp.status_code}"
+    msg = err.get("error_user_msg") or err.get("message") or err.get("error_message") or f"HTTP {resp.status_code}"
+    if step:
+        msg = f"{step}: {msg}"
     transient = resp.status_code >= 500 or resp.status_code == 429 or code in (1, 2, 4, 17, 32, 341, 613)
     return InstagramError(f"Instagram: {msg}"[:300], transient=transient, code=code)
 
@@ -65,13 +69,13 @@ class InstagramClient:
             "client_id": self.app_id, "client_secret": self.app_secret, "grant_type": "authorization_code",
             "redirect_uri": self.redirect_uri, "code": code})
         if r.status_code != 200:
-            raise _safe_error(r)
+            raise _safe_error(r, "code exchange")
         short = r.json()
         user_id = str(short.get("user_id") or "")
         r = self.http.get(f"{GRAPH}/access_token", params={
             "grant_type": "ig_exchange_token", "client_secret": self.app_secret, "access_token": short["access_token"]})
         if r.status_code != 200:
-            raise _safe_error(r)
+            raise _safe_error(r, "long-lived token")
         j = r.json()
         return Token(j["access_token"], int(j.get("expires_in", 0)), user_id)
 

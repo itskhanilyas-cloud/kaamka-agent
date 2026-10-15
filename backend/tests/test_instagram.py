@@ -90,6 +90,11 @@ def test_errors_never_include_tokens():
     assert "IGAA" not in str(e) and not e.transient
 
 
+def test_oauth_endpoint_errors_are_readable():
+    r = httpx.Response(400, json={"error_type": "OAuthException", "code": 400, "error_message": "Invalid platform app"})
+    assert "code exchange: Invalid platform app" in str(igc._safe_error(r, "code exchange"))
+
+
 def test_rate_limit_errors_are_transient():
     assert igc._safe_error(httpx.Response(400, json={"error": {"message": "limit", "code": 4}})).transient
     assert igc._safe_error(httpx.Response(503, json={})).transient
