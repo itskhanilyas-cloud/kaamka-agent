@@ -126,3 +126,7 @@ def test_render_endpoint(client):
     d = _studio(client, "IMAGE")
     r = client.post(f"/api/posts/{d['post_id']}/render", headers=as_owner())
     assert r.status_code == 200 and len(r.json()["media"]) == 1
+
+
+def test_brand_handle_is_the_real_account():
+    assert templates.Brand().handle == "@kaamkaai.official"

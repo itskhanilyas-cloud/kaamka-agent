@@ -44,7 +44,7 @@ def clean(text: str | None) -> str:
 @dataclass
 class Brand:
     name: str = "Kaam Ka AI"
-    handle: str = "@kaamka.ai"
+    handle: str = "@kaamkaai.official"
 
 
 def _font(path: str, size: int) -> ImageFont.FreeTypeFont:
