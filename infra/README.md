@@ -25,5 +25,5 @@
   network adds ~₹1,500/month; revisit when revenue justifies it.
 - Tables are created on start-up. Alembic migrations must be added before the first schema change
   to a database that holds real data.
-- The publish job is not deployed yet; until Instagram is connected (Phase 6) approved posts simply
-  stay approved.
+- Scheduled jobs (publish every 15 min, metrics every 6 h, token renewal daily) are created by
+  `create-jobs.sh`, which copies the app's settings and Key Vault references; deploys roll them to each new image.

@@ -28,7 +28,8 @@ env:
 
 jobs:
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # Forks have no access to this Azure subscription, so deploy only from the original repository.
+    if: ${{ github.repository == 'itskhanilyas-cloud/kaamka-agent' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

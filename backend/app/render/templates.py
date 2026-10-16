@@ -5,9 +5,11 @@ accepts JPEG only. Reel covers are 1080x1920.
 """
 from __future__ import annotations
 
+import os
+
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -43,8 +45,9 @@ def clean(text: str | None) -> str:
 
 @dataclass
 class Brand:
-    name: str = "Kaam Ka AI"
-    handle: str = "@kaamkaai.official"
+    # Set KA_BRAND_NAME / KA_BRAND_HANDLE to use your own brand on every image.
+    name: str = field(default_factory=lambda: os.environ.get("KA_BRAND_NAME", "Kaam Ka AI"))
+    handle: str = field(default_factory=lambda: os.environ.get("KA_BRAND_HANDLE", "@kaamkaai.official"))
 
 
 def _font(path: str, size: int) -> ImageFont.FreeTypeFont:
