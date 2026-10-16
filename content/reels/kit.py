@@ -7,7 +7,6 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 import os
-import os
 F = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../backend/app/render/fonts/")
 W, H, FPS = 1080, 1920, 30
 INDIGO = (61, 59, 243); DEEP = (43, 41, 196); SAFF = (255, 159, 28); WHITE = (255, 255, 255)
@@ -124,8 +123,9 @@ def caption(img, text, t, start, end):
     img.alpha_composite(layer, (0, y0))
 
 
-def render(scenes, out, captions=(), stills=None):
-    """scenes: [(name, seconds, draw_fn(img, t), dark_bg)], captions: [(start, end, text)] in absolute seconds."""
+def render(scenes, out, captions=(), stills=None, audio=None):
+    """scenes: [(name, seconds, draw_fn(img, t), dark_bg)], captions: [(start, end, text)] in absolute seconds.
+    audio: optional WAV path (e.g. from music.py); otherwise a silent track is added."""
     total = sum(s[1] for s in scenes)
 
     def frame_at(T):
@@ -144,9 +144,10 @@ def render(scenes, out, captions=(), stills=None):
     if stills:
         return [frame_at(T) for T in stills]
     ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-                           "-r", str(FPS), "-i", "-", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-shortest",
+                           "-r", str(FPS), "-i", "-", *(["-i", audio] if audio else ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]), "-shortest",
                            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-profile:v", "high",
-                           "-movflags", "+faststart", "-c:a", "aac", "-b:a", "128k", out], stdin=subprocess.PIPE)
+                           "-movflags", "+faststart", *(["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] if audio else []),
+                           "-c:a", "aac", "-b:a", "128k", out], stdin=subprocess.PIPE)
     for i in range(int(total * FPS)):
         ff.stdin.write(frame_at(i / FPS).tobytes())
     ff.stdin.close()
